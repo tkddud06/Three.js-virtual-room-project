@@ -1,0 +1,2001 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <title>Assignment</title>
+        <style>
+            body {margin:0; padding:0; overflow:hidden;}
+        </style>
+    </head>
+    <body>
+        <canvas id = "myCanvas"></canvas>
+
+        <script type="importmap">
+        {
+          "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@v0.132.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@v0.132.0/examples/jsm/"
+          }
+        }
+        </script>
+        
+        <script type="module">
+            // 실습에서 제공해주셨던 파일 버전과 동일한 버전을 사용하였으며, Three.js 공식 권고 방식중 하나인 cdn 방식으로 불러왔습니다.
+            import * as THREE from 'three';
+            import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
+            import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+            import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+            import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
+            import { GUI } from 'three/addons/libs/dat.gui.module.js';
+            import { NURBSSurface } from 'three/addons/curves/NURBSSurface.js';
+            RectAreaLightUniformsLib.init();
+
+            // 작업순서 제어용 매니저, 로더 정의
+            const loadingmanager = new THREE.LoadingManager();
+            const fbxloader = new FBXLoader(loadingmanager);
+            const gltfloader = new GLTFLoader(loadingmanager);
+            const textureloader = new THREE.TextureLoader();
+        
+            // 씬, 렌더러 정의
+            let scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87ceeb);
+            
+            const canvas = document.querySelector("#myCanvas");
+            let renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            renderer.outputEncoding = THREE.sRGBEncoding;
+            
+            // 카메라 정의 및 설정
+            let aspect = window.innerWidth / window.innerHeight;
+            let camera = new THREE.PerspectiveCamera(70, aspect, 0.5, 1000);
+            
+            camera.position.set(-180, 200, 160);
+            camera.lookAt(scene.position);
+            
+            // 트랙볼 컨트롤 정의
+            const controls = new TrackballControls(camera, renderer.domElement);
+            
+            // 트랙볼컨트롤 관련 조정
+            // controls.noRoll = true; 
+            // controls.noPan = true;
+            controls.rotateSpeed = 2.0;
+            controls.zoomSpeed = 1.2; 
+            controls.panSpeed = 0.8;
+
+            controls.update();
+
+
+            
+            // 큐브렌더타겟 생성
+            const cubeRenderTarget = new THREE.WebGLCubeRenderTarget(128, {format: THREE.RGBFormat,
+                generateMipmaps: true,
+                minFilter: THREE.LinearMipmapLinearFilter,
+                encoding: THREE.sRGBEncoding
+            });
+
+            // 큐브 카메라 생성
+            const cubeCamera = new THREE.CubeCamera(0.5, 600, cubeRenderTarget);
+            scene.add(cubeCamera);
+
+            let shouldUpdateEnv = false; // 한번만 환경맵을 업데이트 하기 위한 플래그
+
+            const pmremGenerator = new THREE.PMREMGenerator(renderer); // 정상적으로 재질에 환경맵을 적용하기 위한 요소
+            
+            
+            // 모든 Geometry 크기는 임의로 cm라고 생각하고 정의했음
+            
+            
+            // 벽 상수 정의
+            const FLOOR_SIZE = 400; // FLOOR_SIZE는 실제 방 내부 바닥 크기.
+            const WALL_HEIGHT = 240; // 벽 높이
+            const DOORWALL_WIDTH_LEFT = 10; // doorWallWallLeft의 왼쪽 부분 너비 표시
+            const WALL_THICKNESS = 15;
+
+            // 벽을 설계할때부터 활용하기 위해, 미리 정의함
+            // 문 관련 상수
+            const DOOR_WIDTH = 100;
+            const DOOR_HEIGHT = 210;
+            
+            // 창문 관련 상수
+            const WINDOW_WIDTH = 200;
+            const WINDOW_HEIGHT = 120;
+            
+
+            // 벽지 텍스처
+            let wallColorMap = textureloader.load('resources/image/Wallpaper001A_1K-JPG/Wallpaper001A_1K-JPG_Color.jpg');
+            wallColorMap.encoding = THREE.sRGBEncoding;
+            let wallNormalMap = textureloader.load('resources/image/Wallpaper001A_1K-JPG/Wallpaper001A_1K-JPG_NormalGL.jpg');
+            let wallRoughnessMap = textureloader.load('resources/image/Wallpaper001A_1K-JPG/Wallpaper001A_1K-JPG_Roughness.jpg');
+            const wallTextures = [wallColorMap, wallNormalMap, wallRoughnessMap];
+            for (let texture of wallTextures) {
+                texture.wrapS = THREE.RepeatWrapping;
+                texture.wrapT = THREE.RepeatWrapping;
+                texture.repeat.set(4, 4);
+                texture.anisotropy = 16;
+            }
+            let wallMaterial = new THREE.MeshStandardMaterial({map: wallColorMap, roughnessMap: wallRoughnessMap, normalMap: wallNormalMap});
+            let ceilingMaterial = new THREE.MeshStandardMaterial({map: wallColorMap, roughnessMap: wallRoughnessMap, normalMap: wallNormalMap, side:THREE.DoubleSide});
+            
+            // 방의 벽, 천장, 바닥을 아우르는 그룹 정의
+            let Walls = new THREE.Group();
+            scene.add(Walls);
+            
+            // 천장 정의
+            let ceilingGeometry = new THREE.PlaneGeometry(FLOOR_SIZE , FLOOR_SIZE);
+            let ceiling = new THREE.Mesh(ceilingGeometry, ceilingMaterial);
+            ceiling.receiveShadow = true;
+            ceiling.position.set(0,WALL_HEIGHT,0);
+            ceiling.rotation.x = Math.PI / 2; 
+            Walls.add(ceiling);
+            
+            // 방을 감싸는 벽 정의. 
+            // 벽은 복사해서 쓸 것임.
+            let wallGeometry = new THREE.BoxGeometry(FLOOR_SIZE, WALL_HEIGHT, WALL_THICKNESS);
+            let wall = new THREE.Mesh(wallGeometry, wallMaterial);
+
+            // 벽2 정의
+            let wall2 = wall.clone();
+            wall2.receiveShadow = true;
+            wall2.position.set(-FLOOR_SIZE/2 - WALL_THICKNESS/2 ,WALL_HEIGHT/2,0);
+            wall2.rotation.y = Math.PI / 2;
+            Walls.add(wall2);
+            
+            // 벽3 정의
+            let wall3 = wall.clone();
+            wall3.receiveShadow = true;
+            wall3.position.set(0,WALL_HEIGHT/2,FLOOR_SIZE/2 + WALL_THICKNESS/2);
+            wall3.rotation.y = Math.PI;
+            Walls.add(wall3);
+            
+
+            // 창문프레임 있는 벽 그룹 정의
+            let WindowWall = new THREE.Group();
+            Walls.add(WindowWall);
+
+            // 창문프레임 있는 벽은 4 지오메트리로 나누어 구성할 것임. 창문 위, 창문 아래, 창문 왼쪽, 창문 오른쪽.
+        
+            const WINDOW_WALL_HEIGHT = (WALL_HEIGHT-WINDOW_HEIGHT) / 2
+            const WINDOW_WALL_WIDTH = (FLOOR_SIZE-WINDOW_WIDTH) / 2
+
+            // 창문프레임 있는 벽 위쪽 정의
+            let windowWallTopGeometry = new THREE.BoxGeometry(WINDOW_WIDTH, WINDOW_WALL_HEIGHT, WALL_THICKNESS);
+            let windowWallTop = new THREE.Mesh(windowWallTopGeometry, wallMaterial);
+            windowWallTop.receiveShadow = true;
+            windowWallTop.position.set(0, WALL_HEIGHT - WINDOW_WALL_HEIGHT/2, 0)
+            WindowWall.add(windowWallTop);
+
+            // 창문프레임 있는 벽 아래쪽 정의    
+            let windowWallLowGeometry = new THREE.BoxGeometry(WINDOW_WIDTH, WINDOW_WALL_HEIGHT, WALL_THICKNESS);
+            let windowWallLow = new THREE.Mesh(windowWallLowGeometry, wallMaterial);
+            windowWallLow.receiveShadow = true;
+            windowWallLow.position.set(0, WINDOW_WALL_HEIGHT/2, 0)
+            WindowWall.add(windowWallLow);
+            
+            // 창문프레임 있는 벽 왼쪽 정의
+            let windowWallLeftGeometry = new THREE.BoxGeometry(WINDOW_WALL_WIDTH, WALL_HEIGHT, WALL_THICKNESS);
+            let windowWallLeft = new THREE.Mesh(windowWallLeftGeometry, wallMaterial);
+            windowWallLeft.receiveShadow = true;
+            windowWallLeft.position.set((-FLOOR_SIZE/2) + (WINDOW_WALL_WIDTH/2), WALL_HEIGHT/2, 0);
+            WindowWall.add(windowWallLeft);
+
+            // 창문프레임 있는 벽 오른쪽 정의
+            let windowWallRightGeometry = new THREE.BoxGeometry(WINDOW_WALL_WIDTH, WALL_HEIGHT, WALL_THICKNESS);
+            let windowWallRight = new THREE.Mesh(windowWallRightGeometry, wallMaterial);
+            windowWallRight.receiveShadow = true;
+            windowWallRight.position.set((FLOOR_SIZE/2) - (WINDOW_WALL_WIDTH/2), WALL_HEIGHT/2, 0);
+            WindowWall.add(windowWallRight);
+
+            // 창문프레임 있는 벽 위치 조정
+            WindowWall.position.set(0, 0, -FLOOR_SIZE/2 - WALL_THICKNESS/2);
+            WindowWall.rotation.y = 0;
+            
+            // 도어프레임 있는 벽 그룹 정의
+            let DoorWall = new THREE.Group();
+            Walls.add(DoorWall);
+            
+            // 도어프레임 있는 벽은 3 지오메트리로 나누어 구성할 것임. 위쪽 부분, 왼쪽, 오른쪽.
+            
+            // 도어프레임 있는 벽 위쪽 부분
+            let doorWallTopGeometry = new THREE.BoxGeometry(FLOOR_SIZE, WALL_HEIGHT-DOOR_HEIGHT, WALL_THICKNESS);
+            let doorWallTop = new THREE.Mesh(doorWallTopGeometry, wallMaterial);
+            doorWallTop.receiveShadow = true;
+            doorWallTop.position.set(FLOOR_SIZE/2 + WALL_THICKNESS/2 ,DOOR_HEIGHT + (WALL_HEIGHT - DOOR_HEIGHT)/2,0);
+            doorWallTop.rotation.y = -Math.PI / 2;
+            DoorWall.add(doorWallTop);
+            
+            // 도어프레임 있는 벽 왼쪽(짧은쪽) 부분
+            let doorWallLeftGeometry = new THREE.BoxGeometry(DOORWALL_WIDTH_LEFT,WALL_HEIGHT, WALL_THICKNESS);
+            let doorWallLeft = new THREE.Mesh(doorWallLeftGeometry, wallMaterial);
+            doorWallLeft.receiveShadow = true;
+            doorWallLeft.position.set(FLOOR_SIZE/2 + WALL_THICKNESS/2 , WALL_HEIGHT/2, (FLOOR_SIZE/2) - (DOORWALL_WIDTH_LEFT/2));
+            doorWallLeft.rotation.y = -Math.PI / 2;
+            DoorWall.add(doorWallLeft);
+            
+            // 도어프레임 있는 벽 오른쪽(긴쪽) 부분
+            let doorWallRightGeometry = new THREE.BoxGeometry(FLOOR_SIZE - (DOORWALL_WIDTH_LEFT+DOOR_WIDTH), WALL_HEIGHT, WALL_THICKNESS);
+            let doorWallRight = new THREE.Mesh(doorWallRightGeometry, wallMaterial);
+            doorWallRight.receiveShadow = true;
+            doorWallRight.position.set(FLOOR_SIZE/2 + WALL_THICKNESS/2, WALL_HEIGHT/2, -(FLOOR_SIZE/2) + ((FLOOR_SIZE - (DOORWALL_WIDTH_LEFT+DOOR_WIDTH))/2));
+            doorWallRight.rotation.y = -Math.PI / 2;
+            DoorWall.add(doorWallRight);
+            
+
+            // 바닥 텍스처 
+            let floorColorMap = textureloader.load('resources/image/WoodFloor062_1K-JPG/WoodFloor062_1K-JPG_Color.jpg');
+            floorColorMap.encoding = THREE.sRGBEncoding;
+            let floorNormalMap = textureloader.load('resources/image/WoodFloor062_1K-JPG/WoodFloor062_1K-JPG_NormalGL.jpg');
+            let floorRoughnessMap = textureloader.load('resources/image/WoodFloor062_1K-JPG/WoodFloor062_1K-JPG_Roughness.jpg');
+            let floorDisplacementMap = textureloader.load('resources/image/WoodFloor062_1K-JPG/WoodFloor062_1K-JPG_Displacement.jpg');
+            const floorTextures = [floorColorMap, floorNormalMap, floorRoughnessMap, floorDisplacementMap];
+            for (let texture of floorTextures) {
+                texture.wrapS = THREE.RepeatWrapping;
+                texture.wrapT = THREE.RepeatWrapping;
+                texture.repeat.set(2, 1);
+                texture.anisotropy = 16;
+            }
+            let floorMaterial = new THREE.MeshStandardMaterial({map: floorColorMap, roughnessMap: floorRoughnessMap, normalMap: floorNormalMap, displacementMap:floorDisplacementMap, displacementScale:0.1, side:THREE.DoubleSide});
+            
+            // 바닥 정의
+            let floorGeometry = new THREE.PlaneGeometry(FLOOR_SIZE, FLOOR_SIZE, 100, 100);
+            let floor = new THREE.Mesh(floorGeometry, floorMaterial);
+            floor.receiveShadow = true; 
+            floor.rotation.x = -Math.PI / 2; 
+            Walls.add(floor);
+
+            // 걸레받이 정의
+            // 걸레받이는 일부 복사해서 쓸 것임
+            // castShadow는 불필요하다 생략하고, receiveShadow 속성만 정의함
+
+            // 걸레받이 상수 정의
+            const FLOORGUARDHEIGHT = 8;
+            const FLOORGUARDDEPTH = 1;
+
+            let floorGuardGeometry = new THREE.BoxGeometry(FLOOR_SIZE, FLOORGUARDHEIGHT, FLOORGUARDDEPTH);
+            let floorGuardMaterial = new THREE.MeshStandardMaterial({color : 0xdadada, roughness:0.8});
+            let floorGuard = new THREE.Mesh(floorGuardGeometry, floorGuardMaterial);
+            floorGuard.receiveShadow = true;
+            Walls.add(floorGuard);
+            floorGuard.position.set(0, FLOORGUARDHEIGHT/2, FLOOR_SIZE/2);
+
+            let floorGuard2 = floorGuard.clone();
+            floorGuard2.position.set(0, FLOORGUARDHEIGHT/2, -FLOOR_SIZE/2);
+            Walls.add(floorGuard2);
+            let floorGuard3 = floorGuard.clone();
+            floorGuard3.rotation.y = Math.PI / 2;
+            floorGuard3.position.set(-FLOOR_SIZE/2, FLOORGUARDHEIGHT/2, 0);
+            Walls.add(floorGuard3);
+
+            let floorGuardGeometryDoorWallLeftGeometry = new THREE.BoxGeometry(DOORWALL_WIDTH_LEFT, FLOORGUARDHEIGHT, FLOORGUARDDEPTH);
+            let floorGuardGeometryDoorWallLeft = new THREE.Mesh(floorGuardGeometryDoorWallLeftGeometry, floorGuardMaterial);
+            floorGuardGeometryDoorWallLeft.receiveShadow = true;
+            floorGuardGeometryDoorWallLeft.position.set(FLOOR_SIZE/2, FLOORGUARDHEIGHT/2, (FLOOR_SIZE/2) - (DOORWALL_WIDTH_LEFT/2));
+            floorGuardGeometryDoorWallLeft.rotation.y = -Math.PI / 2;
+            Walls.add(floorGuardGeometryDoorWallLeft);
+            
+            let floorGuardGeometryDoorWallRightGeometry = new THREE.BoxGeometry(FLOOR_SIZE - (DOORWALL_WIDTH_LEFT+DOOR_WIDTH), FLOORGUARDHEIGHT, FLOORGUARDDEPTH);
+            let floorGuardGeometryDoorWallRight = new THREE.Mesh(floorGuardGeometryDoorWallRightGeometry, floorGuardMaterial);
+            floorGuardGeometryDoorWallRight.receiveShadow = true;
+            floorGuardGeometryDoorWallRight.position.set(FLOOR_SIZE/2, FLOORGUARDHEIGHT/2, -(FLOOR_SIZE/2) + ((FLOOR_SIZE - (DOORWALL_WIDTH_LEFT+DOOR_WIDTH))/2));
+            floorGuardGeometryDoorWallRight.rotation.y = -Math.PI / 2;
+            Walls.add(floorGuardGeometryDoorWallRight);
+
+            // 도어프레임 정의
+            // 재질은 걸레받이의 재질을 재활용 함
+
+            // 도어프레임 관련 상수
+            const DOORFRAMEHEIGHT = 6;
+            const DOORFRAMEDEPTH = 3;
+
+            // 문 왼쪽(짧은쪽) 부분 도어프레임 정의
+            let doorFrameLeftGeometry = new THREE.BoxGeometry(DOOR_HEIGHT+DOORFRAMEHEIGHT, DOORFRAMEHEIGHT, DOORFRAMEDEPTH);
+            let doorFrameLeft = new THREE.Mesh(doorFrameLeftGeometry, floorGuardMaterial);
+            doorFrameLeft.receiveShadow = true;DOORFRAMEHEIGHT
+            doorFrameLeft.position.set(FLOOR_SIZE/2,(DOOR_HEIGHT+DOORFRAMEHEIGHT)/2, (FLOOR_SIZE/2) - DOORWALL_WIDTH_LEFT + DOORFRAMEHEIGHT/2);
+            doorFrameLeft.rotation.y = -Math.PI / 2;
+            doorFrameLeft.rotation.z = -Math.PI / 2;
+            Walls.add(doorFrameLeft);
+
+            // 문 오른쪽(긴쪽) 부분 도어프레임 정의
+            let doorFrameRightGeometry = new THREE.BoxGeometry(DOOR_HEIGHT+DOORFRAMEHEIGHT, DOORFRAMEHEIGHT, DOORFRAMEDEPTH);
+            let doorFrameRight = new THREE.Mesh(doorFrameRightGeometry, floorGuardMaterial);
+            doorFrameRight.receiveShadow = true;
+            doorFrameRight.position.set(FLOOR_SIZE/2,(DOOR_HEIGHT+DOORFRAMEHEIGHT)/2, -(FLOOR_SIZE/2) + (FLOOR_SIZE - (DOORWALL_WIDTH_LEFT+DOOR_WIDTH)) - DOORFRAMEHEIGHT/2);
+            doorFrameRight.rotation.y = -Math.PI / 2;
+            doorFrameRight.rotation.z = -Math.PI / 2;
+            Walls.add(doorFrameRight);
+
+            // 문 위쪽 부분 도어프레임 정의
+            let doorFrameTopGeometry = new THREE.BoxGeometry(DOOR_WIDTH, DOORFRAMEHEIGHT, DOORFRAMEDEPTH);
+            let doorFrameTop = new THREE.Mesh(doorFrameTopGeometry, floorGuardMaterial);
+            doorFrameTop.receiveShadow = true;
+            doorFrameTop.position.set(FLOOR_SIZE/2,DOOR_HEIGHT+(DOORFRAMEHEIGHT/2), (FLOOR_SIZE/2) - DOORWALL_WIDTH_LEFT - (DOOR_WIDTH/2));
+            doorFrameTop.rotation.y = -Math.PI / 2;
+            Walls.add(doorFrameTop);
+            
+
+            /// 빌트인오브젝트 그룹 정의
+            let BuiltInObject = new THREE.Group();
+            scene.add(BuiltInObject);
+
+            // 문 그룹 정의
+            let Door = new THREE.Group;
+            BuiltInObject.add(Door);
+
+            // 문 패널 텍스처
+            let doorPanelColorMap = textureloader.load("resources/image/Door/DoorPanel.jpg");
+            doorPanelColorMap.encoding = THREE.sRGBEncoding;
+            let doorPanelNormalMap = textureloader.load("resources/image/Door/DoorPanelNormalMap.jpg");
+            let doorPanelSideColorMap = textureloader.load("resources/image/Door/DoorPanelSide.jpg");
+            let doorPanelTextures = [doorPanelColorMap, doorPanelSideColorMap, doorPanelNormalMap];
+            for (let texture of doorPanelTextures) {
+                texture.anisotropy = 16;
+            }
+            let doorPanelsideMaterial = new THREE.MeshStandardMaterial({map:doorPanelSideColorMap});
+            let doorPanelMaterial = new THREE.MeshStandardMaterial({map:doorPanelColorMap, normalMap:doorPanelNormalMap, bumpScale:0.35});
+
+            const doorMaterials = [
+                doorPanelsideMaterial,  
+                doorPanelsideMaterial,  
+                doorPanelsideMaterial,
+                doorPanelsideMaterial,   
+                doorPanelMaterial,
+                doorPanelMaterial,  
+            ];
+
+            // 문 패널 정의
+            let doorPanelGeometry = new THREE.BoxGeometry(DOOR_WIDTH, DOOR_HEIGHT, 4);
+            let doorPanel = new THREE.Mesh(doorPanelGeometry, doorMaterials);
+            Door.add(doorPanel);
+            
+            // 문 손잡이 그룹 정의
+            let DoorHandle = new THREE.Group();
+            Door.add(DoorHandle);
+
+            // 문 손잡이 핵심부 정의
+            let doorHandleGeometry = new THREE.CylinderGeometry(4.5, 4.5, 7, 40);
+            let doorHandleMaterial = new THREE.MeshStandardMaterial({color:0xc0c0c0, metalness: 0.7, roughness:0.3});
+            let doorHandle = new THREE.Mesh(doorHandleGeometry,doorHandleMaterial);
+            DoorHandle.add(doorHandle);
+            
+            // 문 손잡이 연결부 정의
+            let doorHandle2Geometry = new THREE.CylinderGeometry(3, 3, 14, 40);
+            let doorHandle2 = new THREE.Mesh(doorHandle2Geometry,doorHandleMaterial);
+            DoorHandle.add(doorHandle2);
+            
+            // 문 손잡이 막대 부분 정의
+            // 복사해서 반대편에도 사용
+            let doorHandleBarGeometry = new THREE.BoxGeometry(2, 1, 12);
+            let doorHandleBar = new THREE.Mesh(doorHandleBarGeometry, doorHandleMaterial);
+            DoorHandle.add(doorHandleBar);
+            doorHandleBar.position.set(-6, -6, 0);
+            doorHandleBar.rotation.y = Math.PI / 2;
+            
+            let doorHandleBar2 = doorHandleBar.clone();
+            DoorHandle.add(doorHandleBar2);
+            doorHandleBar.position.set(-6, 6, 0);
+
+            // 문 손잡이 그룹 위치 조정
+            DoorHandle.position.set(42, 0, 0);
+            DoorHandle.rotation.x = Math.PI / 2;
+
+            // 문 그룹 위치 조정
+            Door.position.set(FLOOR_SIZE/2 + 2, DOOR_HEIGHT/2, (FLOOR_SIZE/2) - DOORWALL_WIDTH_LEFT - (DOOR_WIDTH/2));
+            Door.rotation.y = Math.PI / 2;
+
+            // 방 전등 정의
+            let CeilingLightBodyGeometry = new THREE.BoxGeometry(100,10,100); 
+            let CeilingLightBodyMaterial = new THREE.MeshStandardMaterial({color : 0xb5b5b5, emissive : 0xababab});
+            let CeilingLightBody = new THREE.Mesh(CeilingLightBodyGeometry, CeilingLightBodyMaterial);
+
+            CeilingLightBody.position.set(0, WALL_HEIGHT - 5, 0);
+            BuiltInObject.add(CeilingLightBody);
+
+            // 방 전등 빛 정의
+            const ceilingLight = new THREE.PointLight(0xfff0dd, 0.5, 0, 2);
+            ceilingLight.position.set(0,-5.1,0);
+            ceilingLight.castShadow = true;
+            ceilingLight.shadow.radius = 3;
+            CeilingLightBody.add(ceilingLight);
+
+            // 방 전등 빛의 그림자 속성 조절
+            // 그림자 퀄리티 조절
+            ceilingLight.shadow.mapSize.width = 4096;
+            ceilingLight.shadow.mapSize.height = 4096;
+
+            // 그림자 자연스러워 보이도록 수치 조정
+            ceilingLight.shadow.camera.near = 10;
+            ceilingLight.shadow.camera.far = 600;
+            ceilingLight.shadow.bias = -0.0004;
+            ceilingLight.shadow.normalBias = 0.035;
+
+            // 천장에 퍼지는 자연스러운 빛 표현을 위한 보조 light (실존하는 것은 아님)
+            const ceilingLightSupport = new THREE.RectAreaLight(0xfff0dd, 0.4, 100, 100); 
+            ceilingLightSupport.lookAt(0, 1000, 0);
+            CeilingLightBody.add(ceilingLightSupport);
+
+
+            // 장식장 쪽 간접 조명 2개 정의 (간접 조명이라 그림자 설정은 의도적으로 하지 않음)
+            let spotLightBody1Geometry = new THREE.CylinderGeometry(5, 5, 1, 50);
+            let spotLightBody1Material = new THREE.MeshStandardMaterial({color : 0xb5b5b5, emissive : 0xababab});
+            let spotLightBody1 = new THREE.Mesh(spotLightBody1Geometry, spotLightBody1Material);
+            BuiltInObject.add(spotLightBody1);
+            spotLightBody1.position.set(FLOOR_SIZE/2 - 10, WALL_HEIGHT + 0.4, -150);
+
+            let spotLightBody2 = spotLightBody1.clone();
+            BuiltInObject.add(spotLightBody2);
+            spotLightBody2.position.set(FLOOR_SIZE/2 - 10, WALL_HEIGHT + 0.4, 60);
+
+            const spotLight1 = new THREE.SpotLight(0xfff0dd, 1.0, 100, Math.PI/4, 0.6, 2);
+            spotLight1.position.set(0,-0.6,0);
+            spotLightBody1.add(spotLight1);
+            spotLight1.target.position.set(0, -100, 0);
+            spotLightBody1.add(spotLight1.target);
+
+            const spotLight2 = new THREE.SpotLight(0xfff0dd, 1.0, 100, Math.PI/4, 0.6, 2);
+            spotLight2.position.set(0,-0.6,0);
+            spotLightBody2.add(spotLight2);
+            spotLight2.target.position.set(0, -100, 0);
+            spotLightBody2.add(spotLight2.target);
+
+            // 천장에 퍼지는 자연스러운 빛 표현을 위한 보조 빛 2개(실존하는 것은 아님)
+            const spotLight1Support = new THREE.SpotLight(0xfff0dd, 0.4, 100, Math.PI/4, 1.0, 2);
+            spotLight1Support.position.set(0,-10,0);
+            spotLightBody1.add(spotLight1Support);
+            spotLight1Support.target.position.set(0, 10, 0);
+            spotLightBody1.add(spotLight1Support.target);
+
+            const spotLight2Support = new THREE.SpotLight(0xfff0dd, 0.4, 100, Math.PI/4, 1.0, 2);
+            spotLight2Support.position.set(0,-10,0);
+            spotLightBody2.add(spotLight2Support);
+            spotLight2Support.target.position.set(0, 10, 0);
+            spotLightBody2.add(spotLight2Support.target);
+
+
+            // 전등 스위치 그룹 정의
+            let LightSwitch = new THREE.Group();
+            BuiltInObject.add(LightSwitch);
+            
+            // 전등 스위치 몸 부분 정의
+            let lightSwitchBodyGeometry = new THREE.BoxGeometry(9,15,2);
+            let lightSwitchBodyMaterial = new THREE.MeshStandardMaterial({color : 0xf5f5f5 });
+            let lightSwitchBody = new THREE.Mesh(lightSwitchBodyGeometry, lightSwitchBodyMaterial); 
+            LightSwitch.add(lightSwitchBody);
+
+            // 전등 스위치 버튼 1 정의
+            let lightSwitchButtonGeometry = new THREE.BoxGeometry(5.5, 5.25, 1);
+            let lightSwitchButtonMaterial = new THREE.MeshStandardMaterial( {color : 0xc5c5c5});
+            let lightSwitchButton = new THREE.Mesh(lightSwitchButtonGeometry, lightSwitchButtonMaterial);
+            LightSwitch.add(lightSwitchButton);
+
+            // 전등 스위치 버튼 2 정의
+            let lightSwitchButton2Geometry = new THREE.BoxGeometry(5.5, 5.25, 1);
+            let lightSwitchButton2 = new THREE.Mesh(lightSwitchButton2Geometry, lightSwitchButtonMaterial);
+            LightSwitch.add(lightSwitchButton2);
+
+            // 적절히 각 부분과 전등스위치 그룹 위치 조정
+            lightSwitchButton.position.set(0, (5.25/2) + 0.15, -1);
+            lightSwitchButton.rotation.y = Math.PI / 20;
+
+            lightSwitchButton2.position.set(0, -(5.25/2) - 0.15, -1);
+            lightSwitchButton2.rotation.y = Math.PI / 20;
+
+            LightSwitch.position.set(FLOOR_SIZE/2 - 2/2, WALL_HEIGHT/2, FLOOR_SIZE/2 - DOOR_WIDTH - DOORWALL_WIDTH_LEFT - 15);
+            LightSwitch.rotation.y = Math.PI / 2;
+            
+
+            // 창문 정의 (직접 모델링)
+            let Window;
+            gltfloader.load('resources/model/Window.glb', function (gltf) {
+                Window = gltf.scene;
+                BuiltInObject.add(Window);
+                Window.scale.set(100, 100, 70);
+                Window.position.set(0, WALL_HEIGHT/2, -FLOOR_SIZE/2 - 7);
+
+                // 유리의 투명도 설정
+                Window.traverse(function(child) {
+                    if (child.isMesh && child.material) {
+
+                        // 재질 이름이 'windowGlassMaterial'인지 확인
+                        if (child.material.name === 'windowGlassMaterial') {
+
+                            // 유리처럼 보이도록 투명도, 여러 재질 관련 속성 설정
+                            child.material.transparent = true;  // 투명도 활성화
+                            child.material.opacity = 1.0;       // 기본 불투명도
+                            child.material.thickness = 0.02; // 두께 설정
+                            child.material.transmission = 1.0;  // 빛 투과
+
+                            child.material.roughness = 0.0;
+                            child.material.metalness = 0.0;
+                            child.material.side = THREE.DoubleSide;
+                        }
+                    }
+                });
+            }, undefined, function (error) {
+                console.error(error);
+            });
+
+            /// 오브젝트 그룹 정의
+            let Objects = new THREE.Group();
+            scene.add(Objects);
+            
+            // 에어컨 정의 (무료 3d 모델 사용)
+            let AirConditioner;
+            gltfloader.load("resources/model/Airconditioner.glb", function (gltf) {
+                AirConditioner = gltf.scene;
+                AirConditioner.scale.set(1.2, 1.2, 1.2);
+                Objects.add(AirConditioner);
+
+                AirConditioner.position.set(FLOOR_SIZE/2 - 11.6, WALL_HEIGHT - 38, -30);
+                AirConditioner.rotation.y = -Math.PI / 2;
+
+            }, undefined, function (error) {
+                console.error(error);
+            });
+
+            
+            // 나무1 텍스처(책상용)
+            let wood1ColorMap = textureloader.load('resources/image/Wood052_1K-JPG/Wood052_1K-JPG_Color.jpg');
+            wood1ColorMap.encoding = THREE.sRGBEncoding;
+            let wood1NormalMap = textureloader.load('resources/image/Wood052_1K-JPG/Wood052_1K-JPG_NormalGL.jpg');
+            let wood1RoughnessMap = textureloader.load('resources/image/Wood052_1K-JPG/Wood052_1K-JPG_Roughness.jpg');
+            const wood1Textures = [wood1ColorMap, wood1NormalMap, wood1RoughnessMap];
+            for (let texture of wood1Textures) {
+                texture.wrapS = THREE.RepeatWrapping;
+                texture.wrapT = THREE.RepeatWrapping;
+                texture.repeat.set(2, 2);
+                texture.anisotropy = 16;
+            }
+            let wood1Material = new THREE.MeshPhysicalMaterial({map: wood1ColorMap, roughnessMap: wood1RoughnessMap, roughness: 0.8, normalMap: wood1NormalMap, clearcoat: 0.8, clearcoatRoughness: 0.35});
+            
+            // 책상 관련 상수 정의
+            const DESK_PANNEL_WIDTH = 160;
+            const DESK_PANNEL_HEIGHT = 80;
+            const DESK_PANNEL_THICKNESS = 4;
+            const DESK_HEIGHT = 75; // 실제 상판 포함 높이는 77임 (THICKNESS/2값 2가 더해짐)
+            const LEG_HEIGHT = DESK_HEIGHT - DESK_PANNEL_THICKNESS/2;
+            const LEG_WIDTH = 5;
+            
+            // 책상 정의
+            let Desk = new THREE.Group();
+            
+            // 책상 패널 정의
+            let deskPanelGeometry = new THREE.BoxGeometry(DESK_PANNEL_WIDTH, DESK_PANNEL_THICKNESS, DESK_PANNEL_HEIGHT);
+            let deskPanel = new THREE.Mesh(deskPanelGeometry, wood1Material);
+            deskPanel.position.y = DESK_HEIGHT;
+
+            // 책상 다리들 정의
+            // 복사해서 총 4개의 다리 사용
+            let legGeometry = new THREE.BoxGeometry(LEG_WIDTH, LEG_HEIGHT, LEG_WIDTH);
+            let legMaterial = new THREE.MeshStandardMaterial({color : 0xaaaaaa, metalness:0.9, roughness:0.4});
+
+            let deskleg1 = new THREE.Mesh(legGeometry, legMaterial);
+            deskleg1.position.set(DESK_PANNEL_WIDTH/2 - LEG_WIDTH/2 - 2.5, LEG_HEIGHT/2, DESK_PANNEL_HEIGHT/2 - LEG_WIDTH/2 - 2.5);
+
+            let deskleg2 = deskleg1.clone();
+            deskleg2.position.set(-(DESK_PANNEL_WIDTH/2 - LEG_WIDTH/2 - 2.5), LEG_HEIGHT/2, DESK_PANNEL_HEIGHT/2 - LEG_WIDTH/2 - 2.5);
+
+            let deskleg3 = deskleg1.clone();
+            deskleg3.position.set(DESK_PANNEL_WIDTH/2 - LEG_WIDTH/2 - 2.5, LEG_HEIGHT/2, -(DESK_PANNEL_HEIGHT/2 - LEG_WIDTH/2 - 2.5));
+
+            let deskleg4 = deskleg1.clone();
+            deskleg4.position.set(-(DESK_PANNEL_WIDTH/2 - LEG_WIDTH/2 - 2.5), LEG_HEIGHT/2, -(DESK_PANNEL_HEIGHT/2 - LEG_WIDTH/2 - 2.5));
+            
+            Desk.add(deskPanel, deskleg1, deskleg2, deskleg3, deskleg4);
+
+            // 책상 그룹의 위치 조정
+            Desk.rotation.y = Math.PI / 2;
+            Desk.position.x = -70;
+
+            Objects.add(Desk);
+
+            // 장식용 빛 색상 초기 상수 정의
+            const decorationLightColor = 0xfff0dd;
+
+            // 장식조명 그룹 정의
+            let DecorationLightBodys = new THREE.Group();
+            BuiltInObject.add(DecorationLightBodys);
+            
+            // 장식조명들 정의
+            let decorationLightBody1Geometry = new THREE.BoxGeometry(2, 5, DESK_PANNEL_WIDTH - 15);
+            let decorationLightBody1Mesh = new THREE.MeshStandardMaterial({color:0x101010, emissive:decorationLightColor});
+            let decorationLightBody1 = new THREE.Mesh(decorationLightBody1Geometry, decorationLightBody1Mesh);
+            DecorationLightBodys.add(decorationLightBody1);
+            decorationLightBody1.position.set(-(FLOOR_SIZE/2 - 2/2), DESK_PANNEL_HEIGHT + DESK_PANNEL_THICKNESS, 0);
+
+            let decorationLightBody2 = decorationLightBody1.clone();
+            decorationLightBody2.rotation.x = -Math.PI / 2;
+            decorationLightBody2.position.set(-(FLOOR_SIZE/2 - 1),  DESK_PANNEL_HEIGHT + DESK_PANNEL_THICKNESS, DESK_PANNEL_WIDTH/2);
+
+            let decorationLightBody3 = decorationLightBody1.clone();
+            decorationLightBody3.rotation.x = -Math.PI / 2;
+            decorationLightBody3.position.set(-(FLOOR_SIZE/2 - 1),  DESK_PANNEL_HEIGHT + DESK_PANNEL_THICKNESS, -DESK_PANNEL_WIDTH/2);
+
+            // 장식조명 빛 정의
+            // 간접조명이기에 그림자는 고려하지 않았음
+            const RectAreaLight1 = new THREE.RectAreaLight(decorationLightColor, 4, DESK_PANNEL_WIDTH - 15, 5);
+            decorationLightBody1.add(RectAreaLight1);
+            RectAreaLight1.rotation.y = -Math.PI / 2;
+
+            const RectAreaLight2 = new THREE.RectAreaLight(decorationLightColor, 4, DESK_PANNEL_WIDTH - 15, 5);
+            decorationLightBody2.add(RectAreaLight2);
+            RectAreaLight2.rotation.y = -Math.PI / 2;
+            
+            const RectAreaLight3 = new THREE.RectAreaLight(decorationLightColor, 4, DESK_PANNEL_WIDTH - 15, 5);
+            decorationLightBody3.add(RectAreaLight3);
+            RectAreaLight3.rotation.y = -Math.PI / 2;
+            
+
+            // 벽에 퍼지는 자연스러운 빛 표현을 위한 보조 빛(실존하는 것은 아님)
+            const RectAreaLight1Support = new THREE.RectAreaLight(decorationLightColor, 1, DESK_PANNEL_WIDTH - 15, 5);
+            decorationLightBody1.add(RectAreaLight1Support);
+            RectAreaLight1Support.rotation.y = Math.PI / 2;
+            
+            const RectAreaLight2Support = new THREE.RectAreaLight(decorationLightColor, 1, DESK_PANNEL_WIDTH - 15, 5);
+            decorationLightBody2.add(RectAreaLight2Support);
+            RectAreaLight2Support.rotation.y = Math.PI / 2;
+
+            const RectAreaLight3Support = new THREE.RectAreaLight(decorationLightColor, 1, DESK_PANNEL_WIDTH - 15, 5);
+            decorationLightBody3.add(RectAreaLight3Support);
+            RectAreaLight3Support.rotation.y = Math.PI / 2;
+
+            DecorationLightBodys.add(decorationLightBody2, decorationLightBody3);
+
+            // 그림자용 보조 조명 정의
+            // 메인 조명이 꺼졌을 때, 그림자를 생성할 보조 역할 (하나만 배치해도 자연스러워서, 하나만 배치함)
+            // 평소엔 0의 intensity를 가짐. 켜졌을때만 0.5의 intensity를 가지게 설정할 것.
+            const decorationShadowLight = new THREE.PointLight(decorationLightColor, 0.0, 750, 2.0); 
+            decorationShadowLight.position.set(-170, 84.3, -0.8); // 벽 장식등 근처
+            decorationShadowLight.castShadow = true;
+            decorationLightBody1.add(decorationShadowLight);
+
+            decorationShadowLight.shadow.radius = 7;
+            decorationShadowLight.shadow.mapSize.width = 2048;
+            decorationShadowLight.shadow.mapSize.height = 2048;
+
+            // 그림자 자연스러워 보이도록 수치 조정
+            decorationShadowLight.shadow.camera.near = 5;
+            decorationShadowLight.shadow.camera.far = 800;
+            decorationShadowLight.shadow.bias = -0.0004;
+            decorationShadowLight.shadow.normalBias = 0.035;
+
+            
+            // DecorationLight용 애니메이션. 무지개로 색상 변화
+            // 무지개 색상 배열
+            // 빨 -> 노 -> 초 -> 청 -> 파 -> 자 -> 빨 (순환)
+            const DLrainbowColors = [
+                1, 0, 0,
+                1, 1, 0,
+                0, 1, 0,
+                0, 1, 1,
+                0, 0, 1,
+                1, 0, 1,
+                1, 0, 0
+            ];
+
+            const DLrainbowTimes = [0, 2, 4, 6, 8, 10, 12];
+            
+            // 장식조명 몸체용 애니메이션 그룹 정의
+            const DLbodyAnimationGroup = new THREE.AnimationObjectGroup();
+            DLbodyAnimationGroup.add(decorationLightBody1);
+            DLbodyAnimationGroup.add(decorationLightBody2);
+            DLbodyAnimationGroup.add(decorationLightBody3);
+            
+            // 장식조명 빛용 애니메이션 그룹 정의
+            const DLlightAnimationGroup = new THREE.AnimationObjectGroup();
+            DLlightAnimationGroup.add(RectAreaLight1);
+            DLlightAnimationGroup.add(RectAreaLight2);
+            DLlightAnimationGroup.add(RectAreaLight3);
+            DLlightAnimationGroup.add(decorationShadowLight);
+            DLlightAnimationGroup.add(RectAreaLight1Support);
+            DLlightAnimationGroup.add(RectAreaLight2Support);
+            DLlightAnimationGroup.add(RectAreaLight3Support);
+
+            const DLbodyMixer = new THREE.AnimationMixer(DLbodyAnimationGroup);
+            const DLlightMixer = new THREE.AnimationMixer(DLlightAnimationGroup);
+
+            const DLbodyColorKF = new THREE.ColorKeyframeTrack('.material.emissive', DLrainbowTimes, DLrainbowColors);
+            const DLlightColorKF = new THREE.ColorKeyframeTrack('.color', DLrainbowTimes, DLrainbowColors);
+
+            const DLbodyClip = new THREE.AnimationClip('emissiveRainbow', 12, [DLbodyColorKF]);
+            const DLlightClip = new THREE.AnimationClip('lightRainbow', 12, [DLlightColorKF]);
+
+            const DLbodyAction = DLbodyMixer.clipAction(DLbodyClip);
+            DLbodyAction.setLoop(THREE.LoopRepeat);
+            DLbodyAction.play();
+
+            const DLlightAction = DLlightMixer.clipAction(DLlightClip);
+            DLlightAction.setLoop(THREE.LoopRepeat);
+            DLlightAction.play();
+
+
+            // 컴퓨터 정의 (무료 3d 모델 사용)
+            let Computer; 
+            gltfloader.load("resources/model/Computer.glb", function (gltf) {
+                Computer = gltf.scene;
+                Computer.scale.set(10, 10, 10);
+                Objects.add(Computer);
+                
+                Computer.rotation.y = Math.PI / 2;
+                Computer.position.set(-73,28,30);
+            }, undefined, function (error) {
+                console.error(error);
+            });
+
+
+
+            // 안경닦이 만들 준비
+            // 제어점 6x6
+            const nsControlPoints = [
+                [
+                    new THREE.Vector4(-10, 0, 10, 1), new THREE.Vector4(-6, 0, 10, 1),
+                    new THREE.Vector4(-2, 0.5, 10, 1), new THREE.Vector4(2, -0.5, 10, 1),
+                    new THREE.Vector4(6, 0.3, 10, 1), new THREE.Vector4(10, -0.1, 10, 1)
+                ],
+                [
+                    new THREE.Vector4(-10, 0, 6, 1), new THREE.Vector4(-6, 2, 6, 1),
+                    new THREE.Vector4(-2, -0.5, 6, 1), new THREE.Vector4(2, 1.5, 6, 1),
+                    new THREE.Vector4(6, 1, 6, 1), new THREE.Vector4(10, -0.2, 6, 1)
+                ],
+                // 가장 많이 구겨지는 중심부
+                [
+                    new THREE.Vector4(-10, 0.5, 2, 1), new THREE.Vector4(-6, -1, 2, 1),
+                    new THREE.Vector4(-2, 3.5, 2, 1), new THREE.Vector4(2, 2, 2, 1),
+                    new THREE.Vector4(6, 1, 2, 1), new THREE.Vector4(10, 0.5, 2, 1)
+                ],
+                // 가장 많이 구겨지는 중심부
+                [
+                    new THREE.Vector4(-10, 0, -2, 1), new THREE.Vector4(-6, 1.5, -2, 1),
+                    new THREE.Vector4(-2, 2, -2, 1), new THREE.Vector4(2, 4, -2, 1),
+                    new THREE.Vector4(6, -1, -2, 1), new THREE.Vector4(10, 0, -2, 1)
+                ],
+                [
+                    new THREE.Vector4(-10, 0, -6, 1), new THREE.Vector4(-6, -0.5, -6, 1),
+                    new THREE.Vector4(-2, 1, -6, 1), new THREE.Vector4(2, 1.5, -6, 1),
+                    new THREE.Vector4(6, 2, -6, 1), new THREE.Vector4(10, 0, -6, 1)
+                ],
+                [
+                    new THREE.Vector4(-10, 0, -10, 1), new THREE.Vector4(-6, 0, -10, 1),
+                    new THREE.Vector4(-2, 0.5, -10, 1), new THREE.Vector4(2, 0, -10, 1),
+                    new THREE.Vector4(6, 0, -10, 1), new THREE.Vector4(10, 0, -10, 1)
+                ]
+            ];
+
+            // NURBS 설정 (차수 3, 점 6개)
+            const degree1 = 3; 
+            const degree2 = 3;
+            
+            // [0,0,0,0, 0.33, 0.66, 1,1,1,1] 형태로 구간을 나눔
+            const knots1 = [0, 0, 0, 0, 0.333, 0.666, 1, 1, 1, 1];
+            const knots2 = [0, 0, 0, 0, 0.333, 0.666, 1, 1, 1, 1];
+            
+            const nurbsSurface = new NURBSSurface(degree1, degree2, knots1, knots2, nsControlPoints);
+
+            let glassesClothGeometry = new THREE.ParametricGeometry(function(u, v, target) {
+                    nurbsSurface.getPoint(u, v, target);
+                }, 40, 40);
+
+            let  glassesClothMaterial = new THREE.MeshStandardMaterial({
+                color: 0x88ccff,
+                roughness: 1.0,
+                metalness: 0.0,
+                side: THREE.DoubleSide,
+            });
+
+            // 안경닦이 정의
+            let glassesCloth = new THREE.Mesh(glassesClothGeometry, glassesClothMaterial);
+            glassesCloth.scale.set(0.7, 0.7, 0.7);
+            glassesCloth.position.set(-54, 77.1, 39);
+            glassesCloth.rotation.y = Math.PI / 14;
+            Objects.add(glassesCloth);
+
+            // 키보드 정의 (무료 3d 모델 사용)
+            let Keyboard;
+            gltfloader.load("resources/model/Keyboard.glb", function (gltf) {
+                Keyboard = gltf.scene;
+                Keyboard.scale.set(50, 50, 50);
+                Objects.add(Keyboard);
+
+                Keyboard.position.set(-55, DESK_HEIGHT + DESK_PANNEL_THICKNESS/2, 0);
+                Keyboard.rotation.y = Math.PI / 2;
+
+            }, undefined, function (error) {
+                console.error(error);
+            });
+
+
+            // 헤드폰 정의 (무료 3d 모델 사용)
+            let Headphones;
+            fbxloader.load("resources/model/Headphones.fbx", function (fbx) {
+                Headphones = fbx;
+                Headphones.scale.set(0.035, 0.035, 0.035);
+                Objects.add(Headphones);
+                
+                Headphones.position.set(-80, DESK_HEIGHT + DESK_PANNEL_THICKNESS/2, 50);
+                Headphones.rotation.y = Math.PI / 2;
+            }, undefined, function (error) {
+                console.error(error);
+            });
+
+
+            // 헤드폰 스탠드 정의 (직접 모델링)
+            let HeadphonesStand;
+            gltfloader.load("resources/model/HeadphonesStand.glb", function (gltf) {
+                HeadphonesStand = gltf.scene.children[0];
+                HeadphonesStand.scale.set(3.5, 3.5, 3.5);
+                Objects.add(HeadphonesStand);
+
+                HeadphonesStand.position.set(-76.6, DESK_HEIGHT + DESK_PANNEL_THICKNESS/2 + 0.5, 50);
+                HeadphonesStand.rotation.y = Math.PI / 2;
+
+            }, undefined, function (error) {
+                console.error(error);
+            });
+
+
+            // 마우스 정의 (직접 모델링)
+            let Mouse;
+            gltfloader.load("resources/model/Mouse.glb", function (gltf) {
+                Mouse = gltf.scene.children[0];
+                Mouse.scale.set(120, 120, 120);
+                Objects.add(Mouse);
+
+                Mouse.position.set(-50, DESK_HEIGHT + DESK_PANNEL_THICKNESS/2+1.3, -35);
+                Mouse.rotation.y = -Math.PI / 2;
+
+            }, undefined, function (error) {
+                console.error(error);
+            });
+
+
+            // 모니터 정의 (직접 모델링)
+            let Monitor1;
+            gltfloader.load('resources/model/Monitor.glb', function (gltf) {
+                Monitor1 = gltf.scene.children[0];
+                Objects.add(Monitor1);
+
+                Monitor1.scale.set(50, 50, 50);
+                Monitor1.position.set(-81, (DESK_HEIGHT+DESK_PANNEL_THICKNESS/2) + 27, 0);
+                Monitor1.rotation.y = Math.PI / 2;
+            }, undefined, function (error) {
+                console.error(error);
+            });
+
+            // 모니터 정의 (직접 모델링)
+            let Monitor2;
+            gltfloader.load('resources/model/Monitor.glb', function (gltf) {
+                Monitor2 = gltf.scene.children[0];
+                Objects.add(Monitor2);
+
+                Monitor2.scale.set(50, 50, 50);
+                Monitor2.position.set(-60, (DESK_HEIGHT+DESK_PANNEL_THICKNESS/2) + 27, -53);
+                Monitor2.rotation.y = Math.PI / 4;
+
+            }, undefined, function (error) {
+                console.error(error);
+            });
+
+            // 모니터 빛 정의
+            // 하나로도 충분히 두개 모니터에서 나오는 빛의 느낌을 낼 수 있어 하나만 추가
+            const monitorLight = new THREE.PointLight(0xffffff, 0.0, 100, 2.0); // 평소엔 0의 intensity를 가짐. 켜졌을때만 0.2의 intensity를 가지게 설정할 것.
+            monitorLight.position.set(-62, 105, -5); 
+            scene.add(monitorLight);
+
+
+            // 램프 정의 (직접 모델링)
+            let Lamp;
+            gltfloader.load("resources/model/Lamp.glb", function (gltf) {
+                Lamp = gltf.scene.children[0];
+                Lamp.scale.set(10, 13, 10);
+                Objects.add(Lamp);
+
+                Lamp.position.set(-90, DESK_HEIGHT + DESK_PANNEL_THICKNESS/2, 0);
+
+            }, undefined, function (error) {
+                console.error(error);
+            });
+
+            // 케이블 생성 함수
+            function createCable(points) {
+                // CatmullRomCurve3를 이용하여 곡선 생성
+                const path = new THREE.CatmullRomCurve3(points);
+                
+                // 튜브 생성
+                const geometry = new THREE.TubeGeometry(path, 64, 0.2, 8, false);
+                const material = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.7 });
+                
+                return new THREE.Mesh(geometry, material);
+            }
+
+            // 케이블 생성하여 배치
+            // 컴퓨터와 연결해야 하는 요소들의 케이블만 연결하였습니다.
+            // 키보드 -> 본체
+            const keyboardCable = createCable([
+                new THREE.Vector3(-54.7, 77.7, 0.6), // 시작: 키보드 뒤
+                new THREE.Vector3(-78.2, 77.4, -14.0), // 경유: 책상 위
+                new THREE.Vector3(-105.6, 77.4, -32.3), // 경유: 책상 위
+                new THREE.Vector3(-111.5, 76.4, -32.2), // 경유: 책상 뒤쪽 모서리로 이동
+                new THREE.Vector3(-88.0, 39.8, -60.9) // 끝: 본체 뒤
+            ]);
+            Objects.add(keyboardCable);
+
+            // 마우스 -> 본체
+            const mouseCable = createCable([
+                new THREE.Vector3(-54.4, 77.4, -34.9), // 시작: 마우스 앞
+                new THREE.Vector3(-78.0, 77.4, -38.4), // 경유: 책상 위
+                new THREE.Vector3(-103.5, 77.4, -46.6), // 경유: 책상 위
+                new THREE.Vector3(-111.3, 76.4, -51.2), // 경유: 책상 뒤쪽 모서리로 이동
+                new THREE.Vector3(-88.0, 39.7, -61.7)  // 끝: 본체 뒤
+            ]);
+            Objects.add(mouseCable);
+
+            // 모니터 -> 본체
+            const monitorCable1 = createCable([
+                new THREE.Vector3(-81.5, 96.7, 2.3), // 시작: 모니터 뒤 포트
+                new THREE.Vector3(-83.5, 84.7, 2.3), // 경유: 모니터 포트에서 자연스럽게 수직으로 내려옴
+                new THREE.Vector3(-99.4, 77.7, 8.2), // 경유: 책상 위
+                new THREE.Vector3(-111.3, 76.3, 5.9), // 경유: 책상 뒤쪽 모서리로 이동
+                new THREE.Vector3(-88.8, 24.0, -56.9), // 경유: 본체 뒤쪽으로 자연스럽게 연결
+                new THREE.Vector3(-87.4, 24.0, -57.1)  // 끝: 본체 그래픽카드 위치
+            ]);
+            Objects.add(monitorCable1);
+
+            const monitorCable2 = createCable([
+            new THREE.Vector3(-63.4, 96.7, -52.7), // 시작: 모니터 뒤 포트
+            new THREE.Vector3(-63.4, 84.7, -52.7), // 경유: 모니터 포트에서 자연스럽게 수직으로 내려옴
+            new THREE.Vector3(-93.3, 77.4, -64.0), // 경유: 책상 위
+            new THREE.Vector3(-111.3, 76.0, -68.9), // 경유: 책상 뒤로 살짝 떨어짐
+            new THREE.Vector3(-89.0, 39.7, -62.9), // 경유: 본체 뒤쪽으로 자연스럽게 연결
+            new THREE.Vector3(-88.0, 39.7, -62.9) // 끝: 본체 메인보드 연결 위치
+            ]);
+            Objects.add(monitorCable2);
+
+            // 의자 정의 (직접 모델링)
+            let Chair;
+            gltfloader.load("resources/model/Chair.glb", function (gltf) {
+                Chair = gltf.scene.children[0];
+                Chair.scale.set(25, 25, 25);
+                Objects.add(Chair);
+                
+                Chair.position.set(0, 12.6, 0);
+                Chair.rotation.y = -Math.PI / 2;
+                
+            }, undefined, function (error) {
+                console.error(error);
+            });
+
+
+            // 스피커 2개 정의 (직접 모델링)
+            let Speaker1;
+            gltfloader.load("resources/model/Speaker.glb", function (gltf) {
+                Speaker1 = gltf.scene.children[0];
+                Speaker1.scale.set(20, 20, 20);
+                Objects.add(Speaker1);
+
+                Speaker1.position.set(-(FLOOR_SIZE/2 - 50), 65.3, FLOOR_SIZE/2 - 60);
+                Speaker1.rotation.y = Math.PI / 2 + Math.PI / 4;
+
+            }, undefined, function (error) {
+                console.error(error);
+            });
+
+            let Speaker2;
+            gltfloader.load("resources/model/Speaker.glb", function (gltf) {
+                Speaker2 = gltf.scene.children[0];
+                Speaker2.scale.set(20, 20, 20);
+                Objects.add(Speaker2);
+
+                Speaker2.position.set(-(FLOOR_SIZE/2 - 50), 65.3, -(FLOOR_SIZE/2 - 60));
+                Speaker2.rotation.y = Math.PI / 4;
+
+
+            }, undefined, function (error) {
+                console.error(error);
+            });
+
+
+            // 나무2 텍스처(책장용)
+            let wood2ColorMap = textureloader.load('resources/image/Wood021_1K-JPG/Wood021_1K-JPG_Color.jpg');
+            wood2ColorMap.encoding = THREE.sRGBEncoding;
+            let wood2NormalMap = textureloader.load('resources/image/Wood021_1K-JPG/Wood021_1K-JPG_NormalGL.jpg');
+            let wood2RoughnessMap = textureloader.load('resources/image/Wood021_1K-JPG/Wood021_1K-JPG_Roughness.jpg');
+            const wood2Textures = [wood2ColorMap, wood2NormalMap, wood2RoughnessMap];
+            for (let texture of wood2Textures) {
+                texture.wrapS = THREE.RepeatWrapping;
+                texture.wrapT = THREE.RepeatWrapping;
+                texture.repeat.set(2, 2);
+                texture.anisotropy = 16;
+            }
+            let wood2Material = new THREE.MeshStandardMaterial({map: wood2ColorMap, roughnessMap: wood2RoughnessMap, roughness: 0.9, normalMap: wood2NormalMap});
+
+            // 책장 정의
+            // 책장 관련 상수 정의
+            const BOOKCASE_HEIGHT = 164;
+            const BOOKCASE_WIDTH = 80; // 실질적 좌우로 내부 공간
+            const BOOKCASE_DEPTH = 30; // 실질적 앞뒤로 비는 공간
+            const BOOKCASE_FRAME_THICKNESS = 3;
+            const BOOKCASE_SHELVE_THICKNESS = 2;
+
+            // 책장 그룹 정의
+            // 책장은 뒷면, 위, 아래, 옆면, 중간 선반들로 구성
+            let BookCase1 = new THREE.Group();
+            Objects.add(BookCase1);
+
+            // 책장 뒷면 정의
+            let bookCaseBackGeometry = new THREE.BoxGeometry(BOOKCASE_WIDTH, BOOKCASE_HEIGHT, BOOKCASE_FRAME_THICKNESS);
+            let bookCaseBack = new THREE.Mesh(bookCaseBackGeometry, wood2Material);
+            BookCase1.add(bookCaseBack);
+
+            bookCaseBack.position.set(0, BOOKCASE_HEIGHT/2, 0);
+
+            // 책장 윗면 정의
+            let bookCaseUpperGeometry = new THREE.BoxGeometry(BOOKCASE_WIDTH, BOOKCASE_FRAME_THICKNESS, BOOKCASE_DEPTH);
+            let bookCaseUpper = new THREE.Mesh(bookCaseUpperGeometry, wood2Material);
+            BookCase1.add(bookCaseUpper);
+
+            bookCaseUpper.position.set(0, BOOKCASE_HEIGHT - BOOKCASE_FRAME_THICKNESS/2, -(BOOKCASE_DEPTH/2 + BOOKCASE_FRAME_THICKNESS/2));
+
+            // 책장 아랫면 정의
+            let bookCaseLowerGeometry = new THREE.BoxGeometry(BOOKCASE_WIDTH, BOOKCASE_FRAME_THICKNESS, BOOKCASE_DEPTH);
+            let bookCaseLower = new THREE.Mesh(bookCaseLowerGeometry, wood2Material);
+            BookCase1.add(bookCaseLower);
+
+            bookCaseLower.position.set(0, BOOKCASE_FRAME_THICKNESS/2, -(BOOKCASE_DEPTH/2 + BOOKCASE_FRAME_THICKNESS/2));
+
+            // 책장 옆면1 정의
+            let bookCaseSideGeometry = new THREE.BoxGeometry(BOOKCASE_FRAME_THICKNESS, BOOKCASE_HEIGHT, BOOKCASE_DEPTH + BOOKCASE_FRAME_THICKNESS);
+            let bookCaseSide = new THREE.Mesh(bookCaseSideGeometry, wood2Material);
+            BookCase1.add(bookCaseSide);
+
+            bookCaseSide.position.set(-(BOOKCASE_WIDTH/2 + BOOKCASE_FRAME_THICKNESS/2), BOOKCASE_HEIGHT/2, -(BOOKCASE_DEPTH + BOOKCASE_FRAME_THICKNESS)/2 + BOOKCASE_FRAME_THICKNESS/2);
+
+            // 책장 옆면2 정의
+            // 책장 옆면 1을 복사해서 사용
+            let bookCaseSide2 = bookCaseSide.clone();
+            BookCase1.add(bookCaseSide2);
+
+            bookCaseSide2.position.set((BOOKCASE_WIDTH/2 + BOOKCASE_FRAME_THICKNESS/2), BOOKCASE_HEIGHT/2, -(BOOKCASE_DEPTH + BOOKCASE_FRAME_THICKNESS)/2 + BOOKCASE_FRAME_THICKNESS/2);
+            
+            // 책장 선반 정의
+            let bookCaseShelveGeometry = new THREE.BoxGeometry(BOOKCASE_WIDTH, BOOKCASE_SHELVE_THICKNESS, BOOKCASE_DEPTH);
+            let bookCaseShelve = new THREE.Mesh(bookCaseShelveGeometry, wood2Material);
+
+            // 효율적인 책장 선반 배치를 위한 반복문 사용
+            // 책장 선반 관련 상수
+            const SHELVE_COUNT = 3; // 선반 개수
+            const EMPTY_SPACE = (BOOKCASE_HEIGHT - BOOKCASE_FRAME_THICKNESS*2 - BOOKCASE_SHELVE_THICKNESS*SHELVE_COUNT) / (SHELVE_COUNT + 1); // 실질적 상하 비는 공간
+            // console.log(EMPTY_SPACE); // 결과 == 38
+
+            // 미리 만들어둔 책장 선반을 복사하여, 적절한 위치에 반복문으로 배치
+            for (let i = 0; i < SHELVE_COUNT; i++) {
+                let Shelve = bookCaseShelve.clone();
+                BookCase1.add(Shelve);
+                Shelve.position.set(0, BOOKCASE_FRAME_THICKNESS + (i+1)*EMPTY_SPACE + i*BOOKCASE_SHELVE_THICKNESS + BOOKCASE_SHELVE_THICKNESS/2, -(BOOKCASE_DEPTH/2 + BOOKCASE_FRAME_THICKNESS/2));
+            }
+
+            BookCase1.position.set(FLOOR_SIZE/2 - BOOKCASE_FRAME_THICKNESS/2 - 5, 0, 10);
+            BookCase1.rotation.y = Math.PI / 2;
+
+            // 책장 2 정의
+            // 책장 1을 복사하여 이용
+            let BookCase2 = BookCase1.clone();
+            Objects.add(BookCase2);
+
+            BookCase2.position.set(FLOOR_SIZE/2 - BOOKCASE_FRAME_THICKNESS/2 - 5, 0, -100);
+
+            
+            // 각 책장의 선반별로 오브젝트 배치시 접근을 편하게 하기 위해, 각 선반 위 중앙의 위치값을 가지는 오브젝트 배치용 그룹 생성하여 배열에 넣음
+
+            // 오브젝트 배치용 그룹 배열 정의
+            let BookCase2_Objects_Arr = [];
+            let BookCase1_Objects_Arr = [];
+
+            // 오브젝트 배치용 총괄 그룹 정의
+            let BookCase2_Objects = new THREE.Group();
+            let BookCase1_Objects = new THREE.Group();
+
+            // 반복문을 사용하여 배열에 미리 만들어둔 오브젝트 배치용 그룹을 복사하여 넣음
+            for (let i = 0; i < SHELVE_COUNT + 1; i++) {
+            let floor1 = new THREE.Group();
+                floor1.position.set(FLOOR_SIZE/2 - 5 - BOOKCASE_FRAME_THICKNESS - BOOKCASE_DEPTH/2, BOOKCASE_FRAME_THICKNESS + i*EMPTY_SPACE + i*BOOKCASE_SHELVE_THICKNESS, 10); // BookCase1용
+                BookCase1_Objects_Arr.push(floor1);
+                BookCase1_Objects.add(floor1);
+                
+                let floor2 = new THREE.Group();
+                floor2.position.set(FLOOR_SIZE/2 - 5 - BOOKCASE_FRAME_THICKNESS - BOOKCASE_DEPTH/2, BOOKCASE_FRAME_THICKNESS + i*EMPTY_SPACE + i*BOOKCASE_SHELVE_THICKNESS, -100); // BookCase2용
+                BookCase2_Objects_Arr.push(floor2);
+                BookCase2_Objects.add(floor2);
+            }
+
+            Objects.add(BookCase1_Objects);
+            Objects.add(BookCase2_Objects);
+            // BookCase Arr의 각 요소를 통해 해당 책장 해당 선반에 접근 가능
+
+
+            // 책장 오브젝트인 박스들 정의
+            // 박스 1 각 면별 텍스처
+            let Box1FrontColorMap = textureloader.load("resources/image/MainBoardBox/Front.jpg");
+            Box1FrontColorMap.encoding = THREE.sRGBEncoding;
+            let Box1BackColorMap = textureloader.load("resources/image/MainBoardBox/Back.jpg");
+            Box1BackColorMap.encoding = THREE.sRGBEncoding;
+            let Box1UpColorMap = textureloader.load("resources/image/MainBoardBox/Up.jpg");
+            Box1UpColorMap.encoding = THREE.sRGBEncoding;
+            let Box1DownColorMap = textureloader.load("resources/image/MainBoardBox/Down.jpg");
+            Box1DownColorMap.encoding = THREE.sRGBEncoding;
+            let Box1LeftColorMap = textureloader.load("resources/image/MainBoardBox/Left.jpg");
+            Box1LeftColorMap.encoding = THREE.sRGBEncoding;
+            let Box1RightColorMap = textureloader.load("resources/image/MainBoardBox/Right.jpg");
+            Box1RightColorMap.encoding = THREE.sRGBEncoding;
+
+            const Box1Textures = [Box1FrontColorMap, Box1BackColorMap, Box1UpColorMap, Box1DownColorMap, Box1LeftColorMap, Box1RightColorMap];
+            for (let texture of Box1Textures) {
+                texture.anisotropy = 16;
+            }
+
+            let Box1FrontMaterial = new THREE.MeshStandardMaterial({map:Box1FrontColorMap, roughness:0.8});
+            let Box1BackMaterial = new THREE.MeshStandardMaterial({map:Box1BackColorMap, roughness:0.8});
+            let Box1UpMaterial = new THREE.MeshStandardMaterial({map:Box1UpColorMap, roughness:0.8});
+            let Box1DownMaterial = new THREE.MeshStandardMaterial({map:Box1DownColorMap, roughness:0.8});
+            let Box1LeftMaterial = new THREE.MeshStandardMaterial({map:Box1LeftColorMap, roughness:0.8});
+            let Box1RightMaterial = new THREE.MeshStandardMaterial({map:Box1RightColorMap, roughness:0.8});
+
+            const Box1Materials = [
+                Box1BackMaterial,
+                Box1FrontMaterial, 
+                Box1UpMaterial,
+                Box1DownMaterial,
+                Box1RightMaterial,
+                Box1LeftMaterial,
+            ];
+
+            // 박스 2 각 면별 텍스처
+            let Box2FrontColorMap = textureloader.load("resources/image/HeadPhonesBox/Front.jpg");
+            Box2FrontColorMap.encoding = THREE.sRGBEncoding;
+            let Box2BackColorMap = textureloader.load("resources/image/HeadPhonesBox/Back.jpg");
+            Box2BackColorMap.encoding = THREE.sRGBEncoding;
+            let Box2UpColorMap = textureloader.load("resources/image/HeadPhonesBox/Up.jpg");
+            Box2UpColorMap.encoding = THREE.sRGBEncoding;
+            let Box2DownColorMap = textureloader.load("resources/image/HeadPhonesBox/Down.jpg");
+            Box2DownColorMap.encoding = THREE.sRGBEncoding;
+            let Box2LeftColorMap = textureloader.load("resources/image/HeadPhonesBox/Left.jpg");
+            Box2LeftColorMap.encoding = THREE.sRGBEncoding;
+            let Box2RightColorMap = textureloader.load("resources/image/HeadPhonesBox/Right.jpg");
+            Box2RightColorMap.encoding = THREE.sRGBEncoding;
+
+            const Box2Textures = [Box2FrontColorMap, Box2BackColorMap, Box2UpColorMap, Box2DownColorMap, Box2LeftColorMap, Box2RightColorMap];
+
+            for (let texture of Box2Textures) {
+                texture.anisotropy = 16;
+            }
+
+            let Box2FrontMaterial = new THREE.MeshStandardMaterial({map:Box2FrontColorMap, roughness:0.8});
+            let Box2BackMaterial = new THREE.MeshStandardMaterial({map:Box2BackColorMap, roughness:0.8});
+            let Box2UpMaterial = new THREE.MeshStandardMaterial({map:Box2UpColorMap, roughness:0.8});
+            let Box2DownMaterial = new THREE.MeshStandardMaterial({map:Box2DownColorMap, roughness:0.8});
+            let Box2LeftMaterial = new THREE.MeshStandardMaterial({map:Box2LeftColorMap, roughness:0.8});
+            let Box2RightMaterial = new THREE.MeshStandardMaterial({map:Box2RightColorMap, roughness:0.8});
+
+            const Box2Materials = [
+                Box2BackMaterial,
+                Box2FrontMaterial, 
+                Box2UpMaterial,
+                Box2DownMaterial,
+                Box2RightMaterial,
+                Box2LeftMaterial,
+            ];
+
+            // 박스 3 각 면별 텍스처
+            let Box3FrontColorMap = textureloader.load("resources/image/KeyBoardBox/Front.jpg");
+            Box3FrontColorMap.encoding = THREE.sRGBEncoding;
+            let Box3BackColorMap = textureloader.load("resources/image/KeyBoardBox/Back.jpg");
+            Box3BackColorMap.encoding = THREE.sRGBEncoding;
+            let Box3UpColorMap = textureloader.load("resources/image/KeyBoardBox/Up.jpg");
+            Box3UpColorMap.encoding = THREE.sRGBEncoding;
+            let Box3DownColorMap = textureloader.load("resources/image/KeyBoardBox/Down.jpg");
+            Box3DownColorMap.encoding = THREE.sRGBEncoding;
+            let Box3LeftColorMap = textureloader.load("resources/image/KeyBoardBox/Left.jpg");
+            Box3LeftColorMap.encoding = THREE.sRGBEncoding;
+            let Box3RightColorMap = textureloader.load("resources/image/KeyBoardBox/Right.jpg");
+            Box3RightColorMap.encoding = THREE.sRGBEncoding;
+
+            const Box3Textures = [Box3FrontColorMap, Box3BackColorMap, Box3UpColorMap, Box3DownColorMap, Box3LeftColorMap, Box3RightColorMap];
+
+            for (let texture of Box3Textures) {
+                texture.anisotropy = 16;
+            }
+
+            let Box3FrontMaterial = new THREE.MeshStandardMaterial({map:Box3FrontColorMap, roughness:0.8});
+            let Box3BackMaterial = new THREE.MeshStandardMaterial({map:Box3BackColorMap, roughness:0.8});
+            let Box3UpMaterial = new THREE.MeshStandardMaterial({map:Box3UpColorMap, roughness:0.8});
+            let Box3DownMaterial = new THREE.MeshStandardMaterial({map:Box3DownColorMap, roughness:0.8});
+            let Box3LeftMaterial = new THREE.MeshStandardMaterial({map:Box3LeftColorMap, roughness:0.8});
+            let Box3RightMaterial = new THREE.MeshStandardMaterial({map:Box3RightColorMap, roughness:0.8});
+
+            const Box3Materials = [
+                Box3BackMaterial,
+                Box3FrontMaterial, 
+                Box3UpMaterial,
+                Box3DownMaterial,
+                Box3RightMaterial,
+                Box3LeftMaterial,
+            ];
+
+            // 박스 4 카드보드 텍스처
+            let cardboardColorMap = textureloader.load('resources/image/Cardboard002_1K-JPG/Cardboard002_1K-JPG_Color.jpg');
+            cardboardColorMap.encoding = THREE.sRGBEncoding;
+            let cardboardNormalMap = textureloader.load('resources/image/Cardboard002_1K-JPG/Cardboard002_1K-JPG_NormalGL.jpg');
+            let cardboardRoughnessMap = textureloader.load('resources/image/Cardboard002_1K-JPG/Cardboard002_1K-JPG_Roughness.jpg');
+            let Box4Material = new THREE.MeshStandardMaterial({map:cardboardColorMap, roughness:0.8, roughnessMap:cardboardRoughnessMap, normalMap:cardboardNormalMap});
+
+            // 박스 5 각 면별 텍스처
+            let Box5FrontColorMap = textureloader.load("resources/image/GraphicCardBox/Front.jpg");
+            Box5FrontColorMap.encoding = THREE.sRGBEncoding;
+            let Box5BackColorMap = textureloader.load("resources/image/GraphicCardBox/Back.jpg");
+            Box5BackColorMap.encoding = THREE.sRGBEncoding;
+            let Box5UpColorMap = textureloader.load("resources/image/GraphicCardBox/Up.jpg");
+            Box5UpColorMap.encoding = THREE.sRGBEncoding;
+            let Box5DownColorMap = textureloader.load("resources/image/GraphicCardBox/Down.jpg");
+            Box5DownColorMap.encoding = THREE.sRGBEncoding;
+            let Box5LeftColorMap = textureloader.load("resources/image/GraphicCardBox/Left.jpg");
+            Box5LeftColorMap.encoding = THREE.sRGBEncoding;
+            let Box5RightColorMap = textureloader.load("resources/image/GraphicCardBox/Right.jpg");
+            Box5RightColorMap.encoding = THREE.sRGBEncoding;
+
+            const Box5Textures = [Box5FrontColorMap, Box5BackColorMap, Box5UpColorMap, Box5DownColorMap, Box5LeftColorMap, Box5RightColorMap];
+
+            for (let texture of Box5Textures) {
+                texture.anisotropy = 16;
+            }
+
+            let Box5FrontMaterial = new THREE.MeshStandardMaterial({map:Box5FrontColorMap, roughness:0.8});
+            let Box5BackMaterial = new THREE.MeshStandardMaterial({map:Box5BackColorMap, roughness:0.8});
+            let Box5UpMaterial = new THREE.MeshStandardMaterial({map:Box5UpColorMap, roughness:0.8});
+            let Box5DownMaterial = new THREE.MeshStandardMaterial({map:Box5DownColorMap, roughness:0.8});
+            let Box5LeftMaterial = new THREE.MeshStandardMaterial({map:Box5LeftColorMap, roughness:0.8});
+            let Box5RightMaterial = new THREE.MeshStandardMaterial({map:Box5RightColorMap, roughness:0.8});
+
+            const Box5Materials = [
+                Box5BackMaterial,
+                Box5FrontMaterial, 
+                Box5UpMaterial,
+                Box5DownMaterial,
+                Box5RightMaterial,
+                Box5LeftMaterial,
+            ];
+
+            // 박스 1(메인보드 박스) 정의
+            let Box1Geometry = new THREE.BoxGeometry(12, 36, 36); 
+            let Box1 = new THREE.Mesh(Box1Geometry, Box1Materials);
+            BookCase2_Objects_Arr[0].add(Box1);
+            Box1.position.set(0, 36/2, -20);
+            
+            // 박스 2(헤드셋 박스) 정의
+            let Box2Geometry = new THREE.BoxGeometry(15, 35, 35);
+            let Box2 = new THREE.Mesh(Box2Geometry, Box2Materials);
+            BookCase2_Objects_Arr[0].add(Box2);
+            Box2.position.set(0, 35/2, 20);
+            
+            // 박스 3(키보드 박스) 정의
+            let Box3Geometry = new THREE.BoxGeometry(11, 28, 75);
+            let Box3 = new THREE.Mesh(Box3Geometry, Box3Materials);
+            BookCase2_Objects_Arr[1].add(Box3);
+            Box3.position.set(0, 28/2, 0);
+
+            // 박스 4(카드보드 종이 박스) 정의
+            let Box4Geometry = new THREE.BoxGeometry(20, 37, 50);
+            let Box4 = new THREE.Mesh(Box4Geometry, Box4Material);
+            BookCase2_Objects_Arr[3].add(Box4);
+            Box4.position.set(0, 37/2, 10);
+
+            // 박스 5(그래픽카드 박스) 정의
+            let Box5Geometry = new THREE.BoxGeometry(12, 30, 60);
+            let Box5 = new THREE.Mesh(Box5Geometry, Box5Materials);
+            BookCase1_Objects_Arr[3].add(Box5);
+            Box5.position.set(0, 30/2, 0);
+
+
+            // 책장 오브젝트인 게임기 정의 (무료 3d 모델 사용)
+            let GameConsole;
+            gltfloader.load("resources/model/GameConsole.glb", function (gltf) {
+                GameConsole = gltf.scene.children[0];
+                GameConsole.scale.set(70, 70, 70);
+                BookCase2_Objects_Arr[2].add(GameConsole);
+
+                GameConsole.rotation.y = -Math.PI / 2 + Math.PI / 10;
+                GameConsole.position.z = -30;
+
+            }, undefined, function (error) {
+                console.error(error);
+            });
+
+            // 책장 오브젝트인 게임패드 정의 (무료 3d 모델 사용)
+            let Gamepad;
+            gltfloader.load("resources/model/Gamepad.glb", function (gltf) {
+                Gamepad = gltf.scene.children[0];
+                Gamepad.scale.set(70, 70, 70);
+                BookCase2_Objects_Arr[2].add(Gamepad);
+
+                Gamepad.rotation.y = -Math.PI / 2;
+                Gamepad.position.z = -10;
+
+            }, undefined, function (error) {
+                console.error(error);
+            });
+
+            // 책 페이지 디테일을 위한 텍스처
+            let bookSideTexture = textureloader.load("resources/image/Pages.jpg");
+            let bookSideMaterial = new THREE.MeshStandardMaterial({map:bookSideTexture, roughness:1.0});
+
+            // 책장 오브젝트인 일반 책들 정의
+            // 하나하나 배치하는 번거로움을 덜기 위해, 반복문 사용
+
+            // 반복문 사용을 위한 사전 준비
+            // 책 관련 상수 정의
+            const BOOK_COUNT = 21; // 책의 개수
+            const BOOK_X = [20, 19, 20, 18, 15, 16, 17, 22, 20, 16, 20, 20, 20, 18, 16, 25, 20, 26, 19, 20, 20]; // 책의 깊이 (각 요소가 30 이하)
+            const BOOK_Y = [25, 25, 27, 20, 24, 22, 20, 26, 23, 30, 25, 26, 24, 30, 23, 27, 25, 29, 24, 25, 20]; // 책의 높이 (각 요소가 38 이하)
+            const BOOK_Z = [4, 3, 3, 3, 4, 5, 2, 6, 3, 4, 3, 4, 5, 4, 3, 4, 6, 3, 4, 3, 4]; // 책의 너비(두께) (총합이 80 이하)
+            const BOOK_COLOR = [ // 책의 색깔
+                0x8a3324, 0x2c3e50, 0xf2f0e6, 0x5d4037, 0x273c2c, 
+                0x333333, 0xc5a059, 0x795548, 0x4a148c, 0xf2f0e6, 
+                0x2c3e50, 0x8a3324, 0x5d4037, 0x3e2723, 0xd7ccc8, 
+                0x263238, 0x1b5e20, 0xbf360c, 0xf2f0e6, 0x3e2723, 
+                0x4e342e 
+            ];
+
+            let SUM_BOOK_Z = [0, ] // 다음 책 배치에 활용하기 위한 책 너비 누적 합계 배열
+            for (let i = 1; i < BOOK_COUNT; i++) {
+                SUM_BOOK_Z.push(SUM_BOOK_Z[i-1] + BOOK_Z[i-1]);
+            }
+
+            // 책1 그룹(일반적인 책들) 정의
+            let Books1 = new THREE.Group();
+            
+            BookCase1_Objects_Arr[1].add(Books1);
+
+            BookCase1_Objects_Arr[1].position.x += BOOKCASE_DEPTH/2; // 오브젝트 배치용 그룹을 이용한 기준점 조절. 책장 가장 안쪽에 일치하도록 함.
+            
+            // 책 배치를 위해 정의해둔 상수와 반복문 사용
+            for(let i = 0; i < BOOK_COUNT; i++) {
+                let bookGeometry = new THREE.BoxGeometry(BOOK_X[i], BOOK_Y[i], BOOK_Z[i]);
+                let bookCoverMaterial = new THREE.MeshStandardMaterial({color:BOOK_COLOR[i], roughness:0.8});
+                let bookMaterials = [
+                    bookSideMaterial,
+                    bookCoverMaterial,
+                    bookSideMaterial,
+                    bookSideMaterial,
+                    bookCoverMaterial,
+                    bookCoverMaterial,
+                ]
+                let book = new THREE.Mesh(bookGeometry, bookMaterials);
+                book.position.set(-BOOK_X[i]/2, BOOK_Y[i]/2, -40 + SUM_BOOK_Z[i] + BOOK_Z[i]/2);
+                Books1.add(book);
+            }
+
+
+            // 책장 오브젝트인 두꺼운 책들 정의 (직접 모델링)
+            let Books2;
+            gltfloader.load("resources/model/Books.glb", function (gltf) {
+                Books2 = gltf.scene.children[0];
+                Books2.scale.set(100, 100, 100);
+                BookCase1_Objects_Arr[0].add(Books2);
+
+                Books2.position.set(0, 15.5, 3.5);
+                Books2.rotation.y = -Math.PI / 2;
+
+            }, undefined, function (error) {
+                console.error(error);
+            });
+
+
+            // 책장 오브젝트인 장식품 1 정의
+            let Ornament1 = new THREE.Group();
+            BookCase1_Objects_Arr[2].add(Ornament1);
+            
+            let ornament1Material = new THREE.MeshStandardMaterial({color:0xe6e6fa, roughness: 0.2, metalness: 0.8});
+
+            let ornament1FloorGeometry = new THREE.CylinderGeometry(10, 10, 2, 50);
+            let ornament1Floor = new THREE.Mesh(ornament1FloorGeometry, ornament1Material);
+            Ornament1.add(ornament1Floor);
+
+            let ornament1Geometry = new THREE.TorusKnotGeometry(2.5, 1.4, 100, 50, 2, 3);
+            let ornament1 = new THREE.Mesh(ornament1Geometry, ornament1Material);
+            ornament1.scale.set(3, 3, 3);
+            ornament1.rotation.x = Math.PI / 6;
+            ornament1.position.set(0, 12.8, 0);
+            ornament1.rotation.y = -Math.PI / 1.7;
+            Ornament1.add(ornament1);
+
+            Ornament1.position.set(0, 2/2, 20);
+            
+            // Ornament1 애니메이션. 회전.
+            let ornament1mixer;
+            ornament1mixer = new THREE.AnimationMixer(Ornament1);
+
+            const ornament1qInitial = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0); // 0도
+            const ornament1qHalf = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI); // 180도
+            const ornament1qFinal = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI * 2); // 360도
+
+            const ornament1quaternionKF = new THREE.QuaternionKeyframeTrack('.quaternion', [0, 4, 8], 
+            [ornament1qInitial.x, ornament1qInitial.y, ornament1qInitial.z, ornament1qInitial.w, 
+            ornament1qHalf.x, ornament1qHalf.y, ornament1qHalf.z, ornament1qHalf.w, 
+            ornament1qFinal.x, ornament1qFinal.y, ornament1qFinal.z, ornament1qFinal.w]);
+
+            const ornament1clip = new THREE.AnimationClip('spin', 8, [ornament1quaternionKF]);
+
+            const ornament1Action = ornament1mixer.clipAction(ornament1clip);
+            ornament1Action.setLoop(THREE.LoopRepeat);
+            ornament1Action.play();
+
+            // 책장 오브젝트인 장식품 2 정의 (블렌더 내부 기본 오브젝트 활용)
+            let Ornament2;
+            gltfloader.load("resources/model/Monkey.glb", function (gltf) {
+                Ornament2 = gltf.scene.children[0];
+                Ornament2.scale.set(10, 10, 10);
+
+                // 위치 관리용 축 그룹 정의
+                let ornament2pivot = new THREE.Group();
+                ornament2pivot.add(Ornament2);
+                BookCase1_Objects_Arr[2].add(ornament2pivot);
+                
+                Ornament2.rotation.x = -Math.PI / 5;
+
+                ornament2pivot.position.set(5, 5, -20);
+                ornament2pivot.rotation.y = -Math.PI / 2;
+
+            }, undefined, function (error) {
+                console.error(error);
+            });
+
+            
+            // 종이 노말, 질감 텍스처
+            let paperNormalMap = textureloader.load('resources/image/paper001_1K-JPG/Paper001_1K-JPG_NormalGL.jpg');
+            let paperRoughnessMap = textureloader.load('resources/image/paper001_1K-JPG/Paper001_1K-JPG_Roughness.jpg');
+
+            // 포스터 텍스처
+            let poster1ColorMap = textureloader.load( 'resources/image/tajikistan-9883716.jpg');
+            poster1ColorMap.encoding = THREE.sRGBEncoding;
+            poster1ColorMap.anisotropy = 16;
+
+            // 포스터 액자 정의
+            let poster1ImageMaterial = new THREE.MeshStandardMaterial({map: poster1ColorMap, roughness: 1.0, 
+                roughnessMap: paperRoughnessMap, normalMap: paperNormalMap});
+            let sideMaterial = new THREE.MeshStandardMaterial({color:0xffffff, roughness: 1.0}); // 잘 안보이는 부분이라 텍스처처리 하지 않음
+            const poster1materials = [
+                sideMaterial,   
+                sideMaterial,  
+                sideMaterial,  
+                sideMaterial,
+                sideMaterial,   
+                poster1ImageMaterial,  
+            ];
+
+            let poster1Geometry = new THREE.BoxGeometry(170, 120, 1);
+            let poster1 = new THREE.Mesh(poster1Geometry, poster1materials);
+            poster1.position.set(20, WALL_HEIGHT/2 + 10, FLOOR_SIZE/2 - 1/2);
+            Objects.add(poster1);
+            
+            
+            // 주변광 정의
+            let hemisphereLight = new THREE.HemisphereLight(0xffffff, 0xcccccc, 0.5); 
+            scene.add(hemisphereLight);
+            
+
+            // 외부 3d 모델들의 로딩이 완료되면 동작할 작업들
+            loadingmanager.onLoad = function() {
+                // 그림자 관련 설정 작업
+                BuiltInObject.traverse(function(child) {
+                    if (child.isMesh) {
+                        child.castShadow = true;
+                        child.receiveShadow = true;
+                    }
+                });
+
+                Objects.traverse(function(child) {
+                    if (child.isMesh) {
+                        child.castShadow = true;
+                        child.receiveShadow = true;
+                    }
+                });
+
+                // 빛을 내뿜는 객체들은 그림자를 만들지 않도록 설정
+                CeilingLightBody.castShadow = false;
+                spotLightBody1.castShadow = false;
+                spotLightBody2.castShadow = false;
+                CeilingLightBody.receiveShadow = false;
+                spotLightBody1.receiveShadow = false;
+                spotLightBody2.receiveShadow = false;
+
+                DecorationLightBodys.traverse(function(child) {
+                    if (child.isMesh) {
+                        child.castShadow = false;
+                        child.receiveShadow = false;
+                    }
+                });
+
+                // 부자연스럽게 생성되는 그림자 완화를 위한 작업
+                Window.traverse(function(child) {
+                    if (child.isMesh) {
+                        if (child.material) {
+                            child.material.shadowSide = THREE.BackSide; 
+                        }
+                    }
+                });
+                Chair.traverse(function(child) {
+                    if (child.isMesh) {
+                        if (child.material) {
+                            child.material.shadowSide = THREE.BackSide; 
+                        }
+                    }
+                });
+
+                shouldUpdateEnv = true;
+            }
+
+            // 카메라 애니메이션
+            const cameraMixer = new THREE.AnimationMixer(camera);
+
+            // 키프레임 데이터 생성 (0초 ~ 20초 동안 한 바퀴)
+            const duration = 20; // 20초 동안 한 바퀴
+            const loopCount = 200; // 총 for문 도는 횟수
+            const times = [];
+            const positions = [];
+            const quaternions = [];
+
+            const radius = 150; // 회전 반경
+            const height = 200; // 카메라 높이
+            const center = new THREE.Vector3(0, 80, 0); // 바라볼 지점 (방 중앙)
+
+            // loopCount만큼 for문을 돔
+            for (let i = 0; i <= loopCount; i += 1) {
+                // 현재 시간의 비율 (0.0 ~ 1.0)
+                const ratio = i / loopCount;
+
+                // 정확한 시간 계산 (0.0 ~ 20.0)
+                const t = ratio * duration;
+
+                const angle = (t / duration) * Math.PI * 2; // 0 ~ 360도
+
+                // 위치 계산 (원형 궤도)
+                const x = Math.cos(angle) * radius;
+                const z = Math.sin(angle) * radius;
+
+                times.push(t);
+                positions.push(x, height, z); // 위치 저장
+            
+                // 회전 계산 (항상 중앙을 바라보도록)
+                // 가상의 카메라를 만들어서 lookAt을 시키고 그 회전값을 가져옴
+                const dummyCam = new THREE.PerspectiveCamera(1,1,1,1);
+                dummyCam.position.set(x, height, z);
+                dummyCam.lookAt(center);
+                quaternions.push(dummyCam.quaternion.x, dummyCam.quaternion.y, dummyCam.quaternion.z, dummyCam.quaternion.w);
+            }
+
+            const cameraPosTrack = new THREE.VectorKeyframeTrack('.position', times, positions);
+            const cameraRotTrack = new THREE.QuaternionKeyframeTrack('.quaternion', times, quaternions);
+
+            const cameraClip = new THREE.AnimationClip('cameraOrbit', -1, [cameraPosTrack, cameraRotTrack]);
+            const cameraAction = cameraMixer.clipAction(cameraClip);
+            cameraAction.setLoop(THREE.LoopRepeat);
+
+            // GUI 추가
+            const gui = new GUI();
+            const settings = {
+                // 낮/밤 모드 (기본값: Day)
+                timeOfDay: 'Day',
+
+                // 조명 애니메이션 속도 (기본값 1.0)
+                rainbowSpeed: 1.0,
+
+                // 무지개 조명 on/off
+                rainbowRunning: true,
+
+                // 장식품 회전 on/off
+                ornamentRunning: true,
+
+                // 카메라 자동이동 on/off
+                playCamera: false
+                        
+            };
+
+            // 낮/밤 모드 전환
+            // 드롭다운 메뉴 방식
+            gui.add(settings, 'timeOfDay', ['Day', 'Night']).name('낮 / 밤').onChange(function(value) {
+                let isLightOn;
+                if (ceilingLight.intensity == 1.0) { // 현재 조명 상태 확인
+                   isLightOn = true; 
+                }
+                else {
+                    isLightOn = false;
+                }
+                // 불이 켜져있는 경우 + 낮인 경우, intensity를 기본 강도(0.5)로, 불이 꺼진 경우 강도를 강화함
+                if (isLightOn) { 
+                    // 방 불이 켜져있을때
+                    if (value === 'Day') { // 낮
+                    // 헤미스피어: 밝게
+                    hemisphereLight.intensity = 0.5; // 기본 강도
+                    } 
+                }
+                else {
+                    // 방 불이 꺼져있을때
+                    if (value === 'Day') { // 낮
+                    // 헤미스피어: 더 밝게
+                    hemisphereLight.intensity = 0.75; // 더 강한 강도(외부 빛이 있다는 것을 고려함)
+                    } 
+                }
+            
+                // 그 외 기존 로직
+                if (value === 'Day') {
+                    // 낮. 배경: 하늘색
+                    scene.background.set(0x87ceeb); 
+                    hemisphereLight.groundColor.set(0xcccccc); // 밝은 땅 색
+                    // 낮일 경우, 빛 강도 조절만 위에서 따로 조절
+                    shouldUpdateEnv = true; // 환경맵 업데이트
+                } 
+                else {
+                    // 밤. 배경: 짙은 남색, 헤미스피어: 아주 어둡게
+                    scene.background.set(0x050510); // 밤하늘 색
+                    hemisphereLight.intensity = 0.3; // 어둡게 (달빛 느낌) (밤은 외부 빛을 고려하지 않아도 되므로 동일)
+                    hemisphereLight.groundColor.set(0x777777); // 어두운 땅
+                    shouldUpdateEnv = true; // 환경맵 업데이트
+                }
+
+            });
+
+            // 무지개 조명 속도
+            // 0 ~ 5배속까지 조절
+            // 0배속시 색상을 가진 채로 정지한 효과
+            gui.add(settings, 'rainbowSpeed', 0, 5.0, 0.1).name('무지개 속도').onChange(function(value) {
+                DLbodyMixer.timeScale = value;
+                DLlightMixer.timeScale = value;
+            });
+
+            // 무지개 조명 on/off
+            gui.add(settings, 'rainbowRunning').name('무지개 조명').onChange(function(value) {
+                // true면 재생, false면 일시정지
+                DLbodyAction.paused = !value;
+                DLlightAction.paused = !value;
+                if (value === false) {
+                    // 정지시 흰색으로 색상 복구
+                    decorationLightBody1.material.emissive.set(decorationLightColor);
+                    decorationLightBody2.material.emissive.set(decorationLightColor);
+                    decorationLightBody3.material.emissive.set(decorationLightColor);
+
+                    RectAreaLight1.color.set(decorationLightColor);
+                    RectAreaLight2.color.set(decorationLightColor);
+                    RectAreaLight3.color.set(decorationLightColor);
+
+                    decorationShadowLight.color.set(decorationLightColor);
+
+                    RectAreaLight1Support.color.set(decorationLightColor);
+                    RectAreaLight2Support.color.set(decorationLightColor);
+                    RectAreaLight3Support.color.set(decorationLightColor);
+                }
+
+            });
+
+            // 장식품 회전 on/off
+            gui.add(settings, 'ornamentRunning').name('장식품 회전').onChange(function(value) {
+                // true면 On, false면 Off
+                ornament1Action.paused = !value;
+
+            });
+
+            // 카메라 자동 이동 on/off
+            gui.add(settings, 'playCamera').name('카메라 자동 이동').onChange(function(value) {
+                if (value) {
+                    // 켜기: 컨트롤러 끄고 애니메이션 재생
+                    controls.enabled = false; 
+                    cameraAction.reset().play();
+                } else {
+                    // 끄기: 애니메이션 멈추고 컨트롤러 복구
+                    cameraAction.stop();
+                    controls.enabled = true;
+                }
+            });
+
+            // 모니터 화면을 키고 끄는 함수
+            function monitorOnOff() {
+                Monitor1.traverse(function(child) {
+                    if (child.isMesh && child.material) {
+                        // 재질 이름이 'ScreenMaterial'인지 확인
+                        if (child.material.name === 'ScreenMaterial') {
+                            if (child.material.emissive.getHex() === 0) {
+                                // 켜기 (흰색 화면)
+                                monitorLight.intensity = 0.2; // 모니터에서 나오는 빛 조절
+                                child.material.color.set(0xffffff);
+                                child.material.emissive.set(0xaaaaaa);
+                            } else {
+                                // 끄기 (검은 화면)
+                                monitorLight.intensity = 0.0; // 모니터에서 나오는 빛 조절
+                                child.material.color.set(0x040404);
+                                child.material.emissive.set(0x000000);
+                            }
+                            
+                        }
+                    }
+                });
+                
+                Monitor2.traverse(function(child) {
+                    if (child.isMesh && child.material) {
+                        // 재질 이름이 'ScreenMaterial'인지 확인
+                        if (child.material.name === 'ScreenMaterial') {
+                            if (child.material.emissive.getHex() === 0) {
+                                // 켜기 (흰색 화면)
+                                child.material.color.set(0xffffff);
+                                child.material.emissive.set(0xaaaaaa);
+                            } else {
+                                // 끄기 (검은 화면)
+                                child.material.color.set(0x040404);
+                                child.material.emissive.set(0x000000);
+                            }
+                            
+                        }
+                    }
+                });
+            }
+
+            const raycaster = new THREE.Raycaster();
+            const mouseVector = new THREE.Vector2();
+                    
+            window.addEventListener('click', function(event) {
+                // 마우스 좌표 정규화
+                const mouseVector = new THREE.Vector2();
+                mouseVector.x = (event.clientX / window.innerWidth) * 2 - 1;
+                mouseVector.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            
+                // 레이캐스팅
+                raycaster.setFromCamera(mouseVector, camera);
+                
+                // 상호작용 인식용 변수
+                const intersects = raycaster.intersectObjects(scene.children, true);
+            
+                if (intersects.length > 0) {
+                    const clickedObj = intersects[0].object;
+
+                    // 모니터 상호작용. 모니터, 컴퓨터 전원 버튼, 마우스 중 하나를 누르면, 모니터의 전원을 켜고 끌 수 있음.
+                    if (clickedObj.name.includes('monitorBodyGeometry_1') || clickedObj.name.includes('Object_778') || clickedObj.name.includes('mouseBody')) {
+                        monitorOnOff();
+                    }
+                
+                    // 천장등, 장식장 조명등 상호작용. 전등 스위치를 눌러 천장등, 보조등을 켜고 끌 수 있음.
+                    else if (clickedObj === lightSwitchButton) {
+                        let isLightOn; // 현재 조명 상태 확인
+                        if (ceilingLight.intensity > 0.0) {
+                           isLightOn = true; 
+                        }
+                        else {
+                            isLightOn = false;
+                        }
+
+                        // 전등갓 Emissive 토글
+                        if (isLightOn) { // 끄기
+                            ceilingLight.intensity = 0; 
+                            ceilingLightSupport.intensity = 0;
+                            // 천장등이 꺼지면 메인 조명이 사라지므로, 벽 장식등 그림자 조명이 켜져서 그림자를 만들 수 있도록 함
+                            // 천장등이 켜질땐 그 반대의 작용
+                            decorationShadowLight.intensity = 0.5; 
+
+                            lightSwitchButton.rotation.y = -Math.PI / 20;
+                            CeilingLightBody.material.emissive.set(0x000000);
+                            if (settings.timeOfDay === 'Day') {
+                                // 전등이 꺼져도, 원래는 바깥의 빛 때문에 어느정도 밝아야 함
+                                // 낮 : hemisphereLight를 높여줌으로써 밝아 보이게 만듬
+                                hemisphereLight.intensity = 0.75; 
+                            } else {
+                                // 밤 : 전등 끄면 어두워야 함
+                                hemisphereLight.intensity = 0.3; 
+                            }
+                        }
+                        else { // 켜기
+                            ceilingLight.intensity = 0.5; 
+                            ceilingLightSupport.intensity = 0.4;
+                            decorationShadowLight.intensity = 0;
+
+                            lightSwitchButton.rotation.y = Math.PI / 20;
+                            CeilingLightBody.material.emissive.set(0xababab);
+                             if (settings.timeOfDay === 'Day') {
+                                // 전등 꺼도 햇빛 때문에 밝아야 함
+                                // 낮 : 기본 낮 강도인 0.5로 조절
+                                hemisphereLight.intensity = 0.5; 
+                            } else {
+                                // 밤 : 전등 끄면 어두워야 함
+                                hemisphereLight.intensity = 0.3; 
+                            }
+                        }
+                        shouldUpdateEnv = true;
+                    }
+
+                    else if (clickedObj === lightSwitchButton2) {
+                        // 전등 켜기/끄기 로직
+                        let isLightOn; // 현재 조명 상태 확인
+                        if (spotLight1.intensity > 0.0) {
+                           isLightOn = true; 
+                        }
+                        else {
+                            isLightOn = false;
+                        }
+
+                        // 전등갓 Emissive 토글
+                        if (isLightOn) { // 끄기
+                            lightSwitchButton2.rotation.y = -Math.PI / 20;
+                            spotLightBody1.material.emissive.set(0x000000); 
+                            spotLightBody2.material.emissive.set(0x000000); 
+                            spotLight1.intensity = 0;
+                            spotLight2.intensity = 0;
+                            spotLight1Support.intensity = 0;
+                            spotLight2Support.intensity = 0;
+                        }
+                        else { // 켜기
+                            lightSwitchButton2.rotation.y = Math.PI / 20;
+                            spotLightBody1.material.emissive.set(0xababab);
+                            spotLightBody2.material.emissive.set(0xababab);
+                            spotLight1.intensity = 1;
+                            spotLight2.intensity = 1;
+                            spotLight1Support.intensity = 0.4;
+                            spotLight2Support.intensity = 0.4;
+                        }
+                    }
+                }
+            });
+            
+
+            // 방향키로 카메라를 조작하기 위한 사전 준비 작업
+            const clock = new THREE.Clock();
+            let keyState = [];
+            window.addEventListener("keydown", function(k) {keyState[k.code] = true;});
+            window.addEventListener("keyup", function(k) {keyState[k.code] = false;});
+
+            function render() {
+                
+                // 카메라 이동속도 제어를 위한 준비
+                const delta = clock.getDelta(); 
+                const moveSpeed = 200 * delta; // 1초에 200cm만큼 이동
+                
+                const direction = new THREE.Vector3(); // 앞, 뒤 제어용
+                camera.getWorldDirection(direction); // 카메라가 바라보는 앞방향 얻기
+                const right = new THREE.Vector3().crossVectors(camera.up, direction).normalize(); // 좌, 우 제어용. 앞방향, 위방향 벡터 외적으로 구함.
+                const up = new THREE.Vector3(0,1,0); // 위, 아래 제어용. 의도적으로 카메라 기준이 아닌, 땅을 기준으로 수직으로 구현함(편의성 확보)
+                
+                // 방향키로 카메라 이동 기능 구현
+                if (keyState['KeyI'] || keyState['ArrowUp']) { // 전진
+                    camera.position.addScaledVector(direction, moveSpeed);
+                    controls.target.addScaledVector(direction, moveSpeed);
+                }
+                if (keyState['KeyK'] || keyState['ArrowDown']) { // 후진
+                    camera.position.addScaledVector(direction, -moveSpeed);
+                    controls.target.addScaledVector(direction, -moveSpeed);
+                }
+                if (keyState['KeyJ'] || keyState['ArrowLeft']) { // 좌
+                    camera.position.addScaledVector(right, moveSpeed);
+                    controls.target.addScaledVector(right, moveSpeed);
+                }
+                if (keyState['KeyL'] || keyState['ArrowRight']) { // 우
+                    camera.position.addScaledVector(right, -moveSpeed);
+                    controls.target.addScaledVector(right, -moveSpeed);
+                }
+                if (keyState['KeyO'] || keyState['PageUp']) { // 위
+                    camera.position.addScaledVector(up, moveSpeed);
+                    controls.target.addScaledVector(up, moveSpeed);
+                }
+                if (keyState['KeyU'] || keyState['PageDown']) { // 아래
+                    camera.position.addScaledVector(up, -moveSpeed);
+                    controls.target.addScaledVector(up, -moveSpeed);
+                }
+                
+                controls.update();
+                
+                if(shouldUpdateEnv) { // 최초 1회, 그리고 낮/밤 변화시, 메인 조명 변화시에만 환경맵 캡처 (비용 최적화)
+                    
+                    if (Window) { // 창문과 관련한 버그가 있어, 큐브카메라 사용시 보이지 않게 설정 (현재 씬 기준, 실 결과에는 큰 영향 없음)
+                        Window.visible = false; 
+                    }
+
+                    // 1번. 기본 환경맵(전체적으로 적용, 창문, 문 손잡이, 장식품 등)
+                    cubeCamera.position.set(0, WALL_HEIGHT/2, 0);
+
+                    cubeCamera.update(renderer, scene);
+                    const envMap = pmremGenerator.fromCubemap(cubeRenderTarget.texture).texture;
+
+                    scene.traverse(function (child) {
+                        if (child.isMesh && child.material) { // 유리 재질이거나, 일정 수준 이상 금속 재질인 경우만 환경맵 적용(비용 최적화)
+                            if (child.material.metalness > 0.5 || child.material.transmission > 0) {
+                                child.material.envMap = envMap;
+                                child.material.envMapIntensity = 1.0;
+                            }
+                        }
+                    });
+
+
+                    // 2번. 컴퓨터용 환경맵(매우 선명해서, 실제 씬 위치와 불일치시 눈에 띔)
+                    cubeCamera.position.set(-65, 25, -50);
+
+                    if (Computer) {
+                        Computer.visible = false; 
+                    }
+
+                    cubeCamera.update(renderer, scene);
+
+                    if (Computer) {
+                        Computer.visible = true; 
+                    }
+
+                    const envMap2 = pmremGenerator.fromCubemap(cubeRenderTarget.texture).texture;
+
+
+                    Computer.traverse(function (child) {
+                        if (child.isMesh && child.material) {
+                            if (child.material.metalness > 0.5 || child.material.transmission > 0) {
+                                child.material.envMap = envMap2;
+                                child.material.envMapIntensity = 1.0;
+                            }
+                        }
+                    });
+
+
+                    // 3번. 책상 밑 오브젝트들 용 환경맵(책상다리, 의자)
+                    cubeCamera.position.set(-30, 30, 0);
+
+                    cubeCamera.update(renderer, scene);
+                    const envMap3 = pmremGenerator.fromCubemap(cubeRenderTarget.texture).texture;
+
+                    Desk.traverse(function (child) {
+                        if (child.isMesh && child.material) {
+                            if (child.material.metalness > 0.5 || child.material.transmission > 0) {
+                                child.material.envMap = envMap3;
+                                child.material.envMapIntensity = 1.0;
+                            }
+                        }
+                    });
+                    Chair.traverse(function (child) {
+                        if (child.isMesh && child.material) {
+                            if (child.material.metalness > 0.5 || child.material.transmission > 0) {
+                                child.material.envMap = envMap3;
+                                child.material.envMapIntensity = 1.0;
+                            }
+                        }
+                    });
+
+                    if (Window) { // 보이도록 복구
+                        Window.visible = true; 
+                    }
+
+                    shouldUpdateEnv = false;
+                }
+                
+                // 애니메이션용 작업
+                if (ornament1mixer) {
+                    ornament1mixer.update(delta);
+                }
+                if (DLbodyMixer) {
+                    DLbodyMixer.update(delta);
+                }
+                if (DLlightMixer) {
+                    DLlightMixer.update(delta);
+                }
+                if (cameraMixer) {
+                    cameraMixer.update(delta);
+                }
+
+
+                renderer.render(scene, camera);
+                requestAnimationFrame(render);
+            }
+            
+            render();
+            
+
+            // 화면 사이즈 재조절용 함수
+            function onResize() {
+                camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+				renderer.setSize(window.innerWidth, window.innerHeight);
+			}
+
+            window.addEventListener("resize", onResize);
+
+
+            </script>
+    </body>
+    </html>

@@ -1,0 +1,17 @@
+이미지, 텍스처 출처
+tajikistan-9883716.jpg => https://pixabay.com/ko/photos/%ed%83%80%ec%a7%80%ed%82%a4%ec%8a%a4%ed%83%84-%ec%82%b0-%ed%8c%8c%eb%af%b8%eb%a5%b4-9883716/
+Paper001_1K-JPG => https://ambientcg.com/view?id=Paper001
+Pages.jpg => https://www.freepik.com/free-photo/still-life-stacks-papers-documents_114671119.htm#fromView=keyword&page=1&position=5&uuid=5aabe093-1d9f-45f8-a1f3-f74ea33b7c50&query=Book+side+texture
+Cardboard002_1K-JPG =>https://ambientcg.com/view?id=Cardboard002
+WoodFloor062_1K-JPG => https://ambientcg.com/view?id=WoodFloor062
+Wallpaper001A_1K-JPG => https://ambientcg.com/view?id=Wallpaper001A
+Wood052_1K-JPG => https://ambientcg.com/view?id=Wood052
+Wood021_1K-JPG => https://ambientcg.com/view?id=Wood021
+Door => ColorMap : Chatgpt 이미지 생성 사용. normalMap : normalMap 생성 사이트 활용 https://cpetry.github.io/NormalMap-Online/
+
+3d 모델 출처
+Airconditioner -> https://sketchfab.com/3d-models/airconditioner-electrolux-monaco-c86ac3c2aea64986b13fb7dbdeabf9d6
+Computer -> https://sketchfab.com/3d-models/custom-gaming-pc-1a24273417534f69afa0f7c62b643ffc
+GameConsole, Gamepad -> https://www.cgtrader.com/free-3d-models/electronics/other/playstation-5-game-console
+HeadPhones -> https://www.cgtrader.com/items/4062585/download-page
+Keyboard -> https://sketchfab.com/3d-models/vortexseries-mechanical-keyboard-gt-8-nj80-02d16e9dae72419aa24ec6788318f92b
